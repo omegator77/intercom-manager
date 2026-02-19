@@ -2,6 +2,7 @@ import { Type } from '@sinclair/typebox';
 import dotenv from 'dotenv';
 import { FastifyPluginCallback } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'node:crypto';
 import { CoreFunctions } from './api_productions_core_functions';
 import { DbManager } from './db/interface';
 import { Log } from './log';
@@ -27,6 +28,49 @@ import {
 import { ProductionManager } from './production_manager';
 import { SmbProtocol } from './smb';
 dotenv.config();
+
+/**
+ * Dev-only Bearer Auth for selected endpoints (currently: POST /production).
+ *
+ * - Enabled only when DEV_AUTH_TOKEN is set.
+ * - When the token is missing -> 503 (service misconfigured)
+ * - When the token is missing/invalid -> 401
+ *
+ * Why: this lets us protect createProduction while we iterate on permissions/user management.
+ */
+function requireDevBearer(request: any, reply: any): boolean {
+  const expected = (process.env.DEV_AUTH_TOKEN ?? '').trim();
+
+  if (!expected) {
+    reply.code(503).send({ error: 'DEV_AUTH_TOKEN not configured' });
+    return false;
+  }
+
+  const auth = request.headers?.authorization;
+  if (!auth || typeof auth !== 'string' || !auth.toLowerCase().startsWith('bearer ')) {
+    reply.code(401).send({ error: 'Missing bearer token' });
+    return false;
+  }
+
+  const got = auth.slice(7).trim();
+  if (!got) {
+    reply.code(401).send({ error: 'Missing bearer token' });
+    return false;
+  }
+
+  // Constant-time compare to avoid timing leaks
+  const a = Buffer.from(got, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+
+  if (!ok) {
+    reply.code(401).send({ error: 'Invalid bearer token' });
+    return false;
+  }
+
+  return true;
+}
+
 
 export interface ApiProductionsOptions {
   smbServerBaseUrl: string;
@@ -79,7 +123,6 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   const productionManager = opts.productionManager;
   const coreFunctions = opts.coreFunctions;
   const dbManager = opts.dbManager;
-
   setInterval(
     () => productionManager.checkUserStatus(smb, smbServerUrl, smbServerApiKey),
     2_000
@@ -91,6 +134,20 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production',
     {
+      // DEV Bearer protection (remove/replace once real user/permission model exists)
+
+preHandler: (request, reply, done) => {
+  request.log.info('preHandler reached (POST /production)');
+
+  const ok = requireDevBearer(request, reply);
+  request.log.info({ ok, sent: reply.sent }, 'auth result');
+
+  if (!ok) return; // reply already sent
+  done();
+},
+
+
+
       schema: {
         description: 'Create a new Production.',
         body: NewProduction,
@@ -101,30 +158,59 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
       }
     },
     async (request, reply) => {
+      // Debug breadcrumbs so we can see exactly where requests stall
+      request.log.info('handler entered: POST /production');
+
+      // Hard timeout to prevent "black hole" requests while debugging SMB/Mongo calls
+      const timeoutMs = Number(process.env.DEV_CREATE_PROD_TIMEOUT_MS ?? '8000');
+
       try {
-        const production = await productionManager.createProduction(
-          request.body
-        );
+        request.log.info({ timeoutMs }, 'before createProduction');
+
+        const production = await Promise.race([
+          productionManager.createProduction(request.body),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `createProduction timeout after ${timeoutMs}ms`
+                  )
+                ),
+              timeoutMs
+            )
+          )
+        ]);
+
+        request.log.info('after createProduction');
 
         if (production) {
           const productionResponse: ProductionResponse = {
             name: production.name,
             productionId: production._id.toString()
           };
-          reply.code(200).send(productionResponse);
-        } else {
-          reply.code(400).send({ message: 'Failed to create production' });
+          return reply.code(200).send(productionResponse);
         }
-      } catch (err) {
+
+        return reply.code(400).send({ message: 'Failed to create production' });
+      } catch (err: any) {
+        request.log.error(
+          { err },
+          'Exception/timeout when trying to create production'
+        );
         Log().error(err);
-        reply
-          .code(500)
-          .send('Exception thrown when trying to create production: ' + err);
+
+        const msg = String(err?.message ?? err ?? '');
+        const code = msg.includes('timeout') ? 504 : 500;
+
+        return reply
+          .code(code)
+          .send('Exception thrown when trying to create production: ' + msg);
       }
     }
   );
 
-  fastify.get<{
+fastify.get<{
     Reply: ProductionListResponse | string;
     Querystring: {
       limit?: number;

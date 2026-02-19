@@ -64,8 +64,24 @@ export type ApiOptions = ApiGeneralOptions &
 
 export default async (opts: ApiOptions) => {
   const api = fastify({
-    ignoreTrailingSlash: true
+    ignoreTrailingSlash: true,
+    logger: true
   }).withTypeProvider<TypeBoxTypeProvider>();
+
+  api.addHook('onRequest', async (req, _reply) => {
+  req.log.info(
+    {
+      method: req.method,
+      url: req.url,
+      ct: req.headers['content-type'],
+      cl: req.headers['content-length'],
+      te: req.headers['transfer-encoding'],
+      expect: req.headers['expect'],
+    },
+    'onRequest headers'
+  );
+});
+
 
   // register the cookie plugin
   api.register(fastifyCookie);

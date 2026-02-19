@@ -7,6 +7,7 @@ import { IngestManager } from './ingest_manager';
 import { Log } from './log';
 import { ProductionManager } from './production_manager';
 
+
 const SMB_ADDRESS: string = process.env.SMB_ADDRESS ?? 'http://localhost:8080';
 const PUBLIC_HOST: string = process.env.PUBLIC_HOST ?? 'http://localhost:8000';
 
