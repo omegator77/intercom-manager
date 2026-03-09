@@ -678,6 +678,11 @@ fastify.get<{
   }>(
     '/production/:productionId/line/:lineId',
     {
+      preHandler: (request, reply, done) => {
+        const ok = requireDevBearer(request, reply);
+        if (!ok) return;
+        done();
+      },
       schema: {
         description: 'Removes a line from a production.',
         response: {
@@ -908,6 +913,11 @@ fastify.get<{
   }>(
     '/production/:productionId',
     {
+      preHandler: (request, reply, done) => {
+        const ok = requireDevBearer(request, reply);
+        if (!ok) return;
+        done();
+      },
       schema: {
         description: 'Deletes a Production.',
         response: {
