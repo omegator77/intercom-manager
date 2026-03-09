@@ -500,22 +500,27 @@ fastify.get<{
   );
 
   fastify.post<{
-    Params: { productionId: string };
-    Body: NewProductionLine;
-    Reply: LineResponse[] | ErrorResponse | string;
-  }>(
-    '/production/:productionId/line',
-    {
-      schema: {
-        description: 'Add a new Line to a Production.',
-        body: NewProductionLine,
-        response: {
-          200: Type.Array(LineResponse),
-          400: ErrorResponse,
-          500: Type.String()
-        }
-      }
+  Params: { productionId: string };
+  Body: NewProductionLine;
+  Reply: LineResponse[] | ErrorResponse | string;
+}>(
+  '/production/:productionId/line',
+  {
+    preHandler: (request, reply, done) => {
+      const ok = requireDevBearer(request, reply);
+      if (!ok) return;
+      done();
     },
+    schema: {
+      description: 'Add a new Line to a Production.',
+      body: NewProductionLine,
+      response: {
+        200: Type.Array(LineResponse),
+        400: ErrorResponse,
+        500: Type.String()
+      }
+    }
+  },
     async (request, reply) => {
       try {
         const production = await productionManager.requireProduction(
