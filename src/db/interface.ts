@@ -55,6 +55,15 @@ export interface DbManager {
     productionId: number
   ): Promise<ProductionMembership | undefined>;
   getMembershipsForUser(userId: string): Promise<ProductionMembership[]>;
+  getMembershipsForProduction(
+    productionId: number
+  ): Promise<ProductionMembership[]>;
+  updateMembershipRole(
+    userId: string,
+    productionId: number,
+    role: ProductionMembership['role']
+  ): Promise<ProductionMembership | undefined>;
+  deleteMembership(userId: string, productionId: number): Promise<boolean>;
 
   createInvite(invite: Omit<Invite, '_id'>): Promise<Invite>;
   getInviteByToken(token: string): Promise<Invite | undefined>;

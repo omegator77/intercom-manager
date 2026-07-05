@@ -17,7 +17,13 @@ const SESSION_PRUNE_SECONDS = 7_200;
 
 // Documents that live in the same database but are not productions/ingests,
 // so they must be excluded from the whole-database scans used below.
-const RESERVED_ID_PREFIXES = ['counter', 'session_', 'user_', 'membership_', 'invite_'];
+const RESERVED_ID_PREFIXES = [
+  'counter',
+  'session_',
+  'user_',
+  'membership_',
+  'invite_'
+];
 const isReservedId = (id: string): boolean => {
   const lower = id.toLowerCase();
   return RESERVED_ID_PREFIXES.some((prefix) => lower.indexOf(prefix) !== -1);
@@ -596,9 +602,7 @@ export class DbManagerCouchDb implements DbManager {
     }
   }
 
-  async getMembershipsForUser(
-    userId: string
-  ): Promise<ProductionMembership[]> {
+  async getMembershipsForUser(userId: string): Promise<ProductionMembership[]> {
     await this.connect();
     if (!this.nanoDb) {
       throw new Error('Database not connected');
@@ -609,6 +613,54 @@ export class DbManagerCouchDb implements DbManager {
       include_docs: true
     });
     return response.rows.map((row: any) => row.doc) as ProductionMembership[];
+  }
+
+  async getMembershipsForProduction(
+    productionId: number
+  ): Promise<ProductionMembership[]> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    // The doc id is keyed by userId first, so a production-scoped lookup
+    // has to scan the membership_ prefix and filter in memory.
+    const response = await this.nanoDb.list({
+      startkey: 'membership_',
+      endkey: 'membership_￰',
+      include_docs: true
+    });
+    return response.rows
+      .map((row: any) => row.doc as ProductionMembership)
+      .filter((doc) => doc.productionId === productionId);
+  }
+
+  async updateMembershipRole(
+    userId: string,
+    productionId: number,
+    role: ProductionMembership['role']
+  ): Promise<ProductionMembership | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const existing = await this.nanoDb.get(
+      `membership_${userId}_${productionId}`
+    );
+    await this.insertWithRetry({ ...existing, role });
+    return this.getMembership(userId, productionId);
+  }
+
+  async deleteMembership(
+    userId: string,
+    productionId: number
+  ): Promise<boolean> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const doc = await this.nanoDb.get(`membership_${userId}_${productionId}`);
+    const response = await this.nanoDb.destroy(doc._id, doc._rev);
+    return response.ok;
   }
 
   async createInvite(invite: Omit<Invite, '_id'>): Promise<Invite> {

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { FastifyPluginCallback } from 'fastify';
+import { FastifyPluginCallback, FastifyRequest } from 'fastify';
+import { Type } from '@sinclair/typebox';
 import {
   AcceptInviteRequest,
   CreateInviteRequest,
@@ -8,9 +9,12 @@ import {
   InviteResponse,
   LoginRequest,
   MeResponse,
+  MemberInfo,
+  MembersListResponse,
   MembershipInfo,
   PublicUser,
-  UpdateMeRequest
+  UpdateMeRequest,
+  UpdateMemberRoleRequest
 } from './models';
 import { DbManager } from './db/interface';
 import { hashPassword, verifyPassword } from './password';
@@ -20,6 +24,10 @@ import './auth-types';
 
 const AUTH_COOKIE_NAME = 'auth_token';
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function productionIdFromParams(request: FastifyRequest): number {
+  return Number((request.params as { productionId: string }).productionId);
+}
 
 export interface ApiAuthOptions {
   dbManager: DbManager;
@@ -284,6 +292,137 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
         `New user "${username}" joined production ${invite.productionId}`
       );
       return reply.send(await buildMeResponse(user._id));
+    }
+  );
+
+  fastify.get<{
+    Params: { productionId: string };
+    Reply: MembersListResponse | ErrorResponse;
+  }>(
+    '/production/:productionId/members',
+    {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin'],
+        productionIdFromParams
+      ),
+      schema: {
+        description: 'List the members of a production and their role.',
+        response: {
+          200: MembersListResponse,
+          401: ErrorResponse,
+          403: ErrorResponse
+        }
+      }
+    },
+    async (request, reply) => {
+      const productionId = productionIdFromParams(request);
+      const memberships = await dbManager.getMembershipsForProduction(
+        productionId
+      );
+
+      const members: MemberInfo[] = [];
+      for (const membership of memberships) {
+        // eslint-disable-next-line no-await-in-loop
+        const user = await dbManager.getUserById(membership.userId);
+        if (!user) continue;
+        members.push({
+          userId: user._id,
+          username: user.username,
+          displayName: user.displayName,
+          alias: user.alias,
+          role: membership.role
+        });
+      }
+
+      return reply.send({ members });
+    }
+  );
+
+  fastify.patch<{
+    Params: { productionId: string; userId: string };
+    Body: UpdateMemberRoleRequest;
+    Reply: MemberInfo | ErrorResponse;
+  }>(
+    '/production/:productionId/members/:userId',
+    {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin'],
+        productionIdFromParams
+      ),
+      schema: {
+        description: "Change a member's role for a production.",
+        body: UpdateMemberRoleRequest,
+        response: {
+          200: MemberInfo,
+          401: ErrorResponse,
+          403: ErrorResponse,
+          404: ErrorResponse
+        }
+      }
+    },
+    async (request, reply) => {
+      const productionId = productionIdFromParams(request);
+      const { userId } = request.params;
+
+      const existing = await dbManager.getMembership(userId, productionId);
+      if (!existing) {
+        return reply.code(404).send({ message: 'Membership not found' });
+      }
+
+      const updated = await dbManager.updateMembershipRole(
+        userId,
+        productionId,
+        request.body.role
+      );
+      const user = await dbManager.getUserById(userId);
+      if (!updated || !user) {
+        return reply.code(404).send({ message: 'Membership not found' });
+      }
+
+      return reply.send({
+        userId: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        alias: user.alias,
+        role: updated.role
+      });
+    }
+  );
+
+  fastify.delete<{
+    Params: { productionId: string; userId: string };
+    Reply: string | ErrorResponse;
+  }>(
+    '/production/:productionId/members/:userId',
+    {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin'],
+        productionIdFromParams
+      ),
+      schema: {
+        description: 'Remove a member from a production.',
+        response: {
+          200: Type.String(),
+          401: ErrorResponse,
+          403: ErrorResponse,
+          404: ErrorResponse
+        }
+      }
+    },
+    async (request, reply) => {
+      const productionId = productionIdFromParams(request);
+      const { userId } = request.params;
+
+      const existing = await dbManager.getMembership(userId, productionId);
+      if (!existing) {
+        return reply.code(404).send({ message: 'Membership not found' });
+      }
+
+      await dbManager.deleteMembership(userId, productionId);
+      return reply.send('removed');
     }
   );
 

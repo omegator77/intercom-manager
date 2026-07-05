@@ -334,11 +334,6 @@ export const ShareResponse = Type.Object({
 });
 export type ShareResponse = Static<typeof ShareResponse>;
 
-export const ReAuthResponse = Type.Object({
-  token: Type.String({ description: 'The new OSC Service Access Token' })
-});
-export type ReAuthResponse = Static<typeof ReAuthResponse>;
-
 // WHIP/WHEP endpoint request body schema
 export const WhipWhepRequest = Type.String({
   description: 'WebRTC SDP offer'
@@ -494,5 +489,24 @@ export const AcceptInviteRequest = Type.Object({
   displayName: Type.String()
 });
 export type AcceptInviteRequest = Static<typeof AcceptInviteRequest>;
+
+export const MemberInfo = Type.Object({
+  userId: Type.String(),
+  username: Type.String(),
+  displayName: Type.String(),
+  alias: Type.Optional(Type.String()),
+  role: UserRole
+});
+export type MemberInfo = Static<typeof MemberInfo>;
+
+export const MembersListResponse = Type.Object({
+  members: Type.Array(MemberInfo)
+});
+export type MembersListResponse = Static<typeof MembersListResponse>;
+
+export const UpdateMemberRoleRequest = Type.Object({
+  role: UserRole
+});
+export type UpdateMemberRoleRequest = Static<typeof UpdateMemberRoleRequest>;
 
 export const PatchIngestResponse = Type.Omit(Ingest, ['ipAddress']);
