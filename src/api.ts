@@ -1,17 +1,20 @@
 import fastifyCookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import fastifyJwt from '@fastify/jwt';
 import fastifyRateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUI from '@fastify/swagger-ui';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import { Static, Type } from '@sinclair/typebox';
 import fastify, { FastifyPluginCallback } from 'fastify';
+import apiAuth from './api_auth';
 import { getApiIngests } from './api_ingests';
 import { ApiProductionsOptions, getApiProductions } from './api_productions';
 import apiReAuth from './api_re_auth';
 import apiShare from './api_share';
 import apiWhip, { ApiWhipOptions } from './api_whip';
 import apiWhep, { ApiWhepOptions } from './api_whep';
+import './auth-types';
 import { DbManager } from './db/interface';
 import { IngestManager } from './ingest_manager';
 import { ProductionManager } from './production_manager';
@@ -55,6 +58,7 @@ export interface ApiGeneralOptions {
   dbManager: DbManager;
   productionManager: ProductionManager;
   ingestManager: IngestManager;
+  jwtSecret: string;
 }
 
 export type ApiOptions = ApiGeneralOptions &
@@ -70,11 +74,34 @@ export default async (opts: ApiOptions) => {
   // register the cookie plugin
   api.register(fastifyCookie);
 
-  // register the cors plugin, configure it for better security
+  // register the JWT plugin, used for the browser login cookie (auth_token).
+  // WHIP/WHEP bearer-token auth is unrelated and untouched by this.
+  api.register(fastifyJwt, {
+    secret: opts.jwtSecret,
+    cookie: { cookieName: 'auth_token', signed: false }
+  });
+
+  // decorate every request with the logged in user, if any. Requests without
+  // a valid cookie stay unauthenticated (request.user === null) so that
+  // guest/share-link joins keep working unchanged.
+  api.addHook('onRequest', async (request) => {
+    try {
+      await request.jwtVerify({ onlyCookie: true });
+    } catch {
+      // no/invalid cookie -> guest
+    }
+  });
+
+  // register the cors plugin, configure it for better security.
+  // credentials: true + origin: true (reflect the request origin) is required
+  // so the browser sends/receives the auth cookie cross-origin between the
+  // frontend and this API.
   api.register(cors, {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    exposedHeaders: ['Content-Type']
+    exposedHeaders: ['Content-Type'],
+    origin: true,
+    credentials: true
   });
 
   await api.register(fastifyRateLimit, {
@@ -127,6 +154,11 @@ export default async (opts: ApiOptions) => {
   });
   api.register(apiShare, { publicHost: opts.publicHost, prefix: 'api/v1' });
   api.register(apiReAuth, { prefix: 'api/v1' });
+  api.register(apiAuth, {
+    prefix: 'api/v1',
+    dbManager: opts.dbManager,
+    publicHost: opts.publicHost
+  });
 
   api.all('/whip/:productionId/:lineId', async (request, reply) => {
     if (request.method !== 'POST' && request.method !== 'OPTIONS') {

@@ -70,6 +70,20 @@ The `osc_eyevinn_intercom_manager` resource requires these variables:
 | `OSC_ACCESS_TOKEN`          | Personal Access Token from OSC for link sharing and reauthenticating                                                                                                                                                                                        |
 | `ICE_SERVERS`               | Comma-separated list of ICE servers in the format: `turn:username:password@turn.example.com,stun:stun.example.com`. If no STUN server is provided, and WHIP endpoints are used, Google's default STUN server (`stun:stun.l.google.com:19302`) will be used. |
 | `MONGODB_CONNECTION_STRING` | DEPRECATED: MongoDB connection string                                                                                                                                                                                                                       |
+| `JWT_SECRET`                | Required. Signs the login session cookie. Generate with e.g. `openssl rand -hex 32`                                                                                                                                                                        |
+
+## User accounts and roles
+
+There are no self-registration or public sign-up endpoints. Accounts are created in one of two ways:
+
+1. **Bootstrap the first admin** (once, before anyone logs in):
+   ```sh
+   npm run bootstrap-admin -- <username> <password> "<display name>"
+   ```
+   Refuses to run if any account already exists. The created account is a super admin: it can create productions and generate invite links for any production.
+2. **Invite links**: an admin or producer of a production calls `POST /api/v1/auth/invite` (or uses the frontend) to generate a link scoped to that production and a role (`admin`, `producer`, or `participant`). The recipient opens the link and sets their own username, password and display name.
+
+Once logged in, a user's account name (or their optional alias, editable via `PATCH /api/v1/auth/me`) is what shows up in the intercom - the free-text name field is only used for guests joining via a share link or WHIP/WHEP device, which keep working without an account.
 
 ## Installation / Usage
 

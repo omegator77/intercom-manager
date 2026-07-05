@@ -1,8 +1,10 @@
 import { Type } from '@sinclair/typebox';
 import dotenv from 'dotenv';
-import { FastifyPluginCallback } from 'fastify';
+import { FastifyPluginCallback, FastifyRequest } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { CoreFunctions } from './api_productions_core_functions';
+import { requireProductionRole, requireSuperAdmin } from './auth-guard';
+import './auth-types';
 import { DbManager } from './db/interface';
 import { Log } from './log';
 import {
@@ -50,6 +52,10 @@ function toUserResponse(doc: any) {
   return out;
 }
 
+function productionIdFromParams(request: FastifyRequest): number {
+  return parseInt((request.params as { productionId: string }).productionId, 10);
+}
+
 // To keep participant list order from changing on each fetch of participants
 function sortParticipants(participants: UserResponse[]): UserResponse[] {
   return [...participants].sort((a, b) => {
@@ -91,6 +97,7 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production',
     {
+      preHandler: requireSuperAdmin(dbManager),
       schema: {
         description: 'Create a new Production.',
         body: NewProduction,
@@ -420,6 +427,11 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line',
     {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
       schema: {
         description: 'Add a new Line to a Production.',
         body: NewProductionLine,
@@ -592,6 +604,11 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line/:lineId',
     {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
       schema: {
         description: 'Removes a line from a production.',
         response: {
@@ -656,7 +673,19 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
     },
     async (request, reply) => {
       try {
-        const { lineId, productionId, username } = request.body;
+        const { lineId, productionId } = request.body;
+        let { username } = request.body;
+
+        // Logged in users always join under their account name (or alias),
+        // regardless of what the client sent. Guests (share links, WHIP/WHEP
+        // devices) keep sending their own free-text name unchanged.
+        if (request.user) {
+          const account = await dbManager.getUserById(request.user.userId);
+          if (account) {
+            username = account.alias || account.displayName;
+          }
+        }
+
         const sessionId: string = uuidv4();
 
         const smbConferenceId = await coreFunctions.createConferenceForLine(
@@ -822,6 +851,7 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId',
     {
+      preHandler: requireProductionRole(dbManager, ['admin'], productionIdFromParams),
       schema: {
         description: 'Deletes a Production.',
         response: {

@@ -395,4 +395,104 @@ export const PatchIngest = Type.Union([
   })
 ]);
 
+// User accounts, per-production roles and invite links
+export const UserRole = Type.Union([
+  Type.Literal('admin'),
+  Type.Literal('producer'),
+  Type.Literal('participant')
+]);
+export type UserRole = Static<typeof UserRole>;
+
+export const User = Type.Object({
+  _id: Type.String(),
+  username: Type.String(),
+  passwordHash: Type.String(),
+  displayName: Type.String(),
+  alias: Type.Optional(Type.String()),
+  // Global admins can create productions and manage roles on any production.
+  // Only the bootstrap account is a super admin by default; every other
+  // account's permissions are scoped per-production via ProductionMembership.
+  isSuperAdmin: Type.Optional(Type.Boolean()),
+  createdAt: Type.String({ format: 'date-time' })
+});
+export type User = Static<typeof User>;
+
+export const PublicUser = Type.Object({
+  id: Type.String(),
+  username: Type.String(),
+  displayName: Type.String(),
+  alias: Type.Optional(Type.String()),
+  isSuperAdmin: Type.Optional(Type.Boolean())
+});
+export type PublicUser = Static<typeof PublicUser>;
+
+export const ProductionMembership = Type.Object({
+  _id: Type.String(),
+  userId: Type.String(),
+  productionId: Type.Number(),
+  role: UserRole
+});
+export type ProductionMembership = Static<typeof ProductionMembership>;
+
+export const Invite = Type.Object({
+  _id: Type.String(),
+  token: Type.String(),
+  productionId: Type.Number(),
+  role: UserRole,
+  createdBy: Type.String(),
+  expiresAt: Type.String({ format: 'date-time' }),
+  usedBy: Type.Optional(Type.String()),
+  usedAt: Type.Optional(Type.String({ format: 'date-time' }))
+});
+export type Invite = Static<typeof Invite>;
+
+export const LoginRequest = Type.Object({
+  username: Type.String(),
+  password: Type.String()
+});
+export type LoginRequest = Static<typeof LoginRequest>;
+
+export const MembershipInfo = Type.Object({
+  productionId: Type.Number(),
+  role: UserRole
+});
+export type MembershipInfo = Static<typeof MembershipInfo>;
+
+export const MeResponse = Type.Object({
+  user: PublicUser,
+  memberships: Type.Array(MembershipInfo)
+});
+export type MeResponse = Static<typeof MeResponse>;
+
+export const UpdateMeRequest = Type.Object({
+  alias: Type.Optional(Type.String())
+});
+export type UpdateMeRequest = Static<typeof UpdateMeRequest>;
+
+export const CreateInviteRequest = Type.Object({
+  productionId: Type.Number(),
+  role: UserRole
+});
+export type CreateInviteRequest = Static<typeof CreateInviteRequest>;
+
+export const InviteResponse = Type.Object({
+  token: Type.String(),
+  url: Type.String()
+});
+export type InviteResponse = Static<typeof InviteResponse>;
+
+export const InviteInfoResponse = Type.Object({
+  productionId: Type.Number(),
+  productionName: Type.String(),
+  role: UserRole
+});
+export type InviteInfoResponse = Static<typeof InviteInfoResponse>;
+
+export const AcceptInviteRequest = Type.Object({
+  username: Type.String(),
+  password: Type.String(),
+  displayName: Type.String()
+});
+export type AcceptInviteRequest = Static<typeof AcceptInviteRequest>;
+
 export const PatchIngestResponse = Type.Omit(Ingest, ['ipAddress']);
