@@ -3,7 +3,12 @@ import dotenv from 'dotenv';
 import { FastifyPluginCallback, FastifyRequest } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { CoreFunctions } from './api_productions_core_functions';
-import { requireProductionRole, requireSuperAdmin } from './auth-guard';
+import {
+  getRequestUser,
+  requireProductionMembership,
+  requireProductionRole,
+  requireSuperAdmin
+} from './auth-guard';
 import './auth-types';
 import { DbManager } from './db/interface';
 import { Log } from './log';
@@ -53,7 +58,10 @@ function toUserResponse(doc: any) {
 }
 
 function productionIdFromParams(request: FastifyRequest): number {
-  return parseInt((request.params as { productionId: string }).productionId, 10);
+  return parseInt(
+    (request.params as { productionId: string }).productionId,
+    10
+  );
 }
 
 // To keep participant list order from changing on each fetch of participants
@@ -156,14 +164,38 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
     },
     async (request, reply) => {
       try {
+        const account = await getRequestUser(dbManager, request);
+        if (!account) {
+          return reply.code(401).send('Login required');
+        }
+
         const limit = request.query.limit || 50;
         const offset = request.query.offset || 0;
         const extended = request.query.extended || false;
-        const productions = await productionManager.getProductions(
-          limit,
-          offset
+
+        // Non-admins only ever see productions they're a member of. Fetched
+        // and filtered in full (not paginated at the DB level) since this
+        // tool runs at a small, self-hosted scale.
+        const numberOfProductions =
+          await productionManager.getNumberOfProductions();
+        const allProductions = await productionManager.getProductions(
+          numberOfProductions,
+          0
         );
-        const totalItems = await productionManager.getNumberOfProductions();
+        const visibleProductions = account.isSuperAdmin
+          ? allProductions
+          : await (async () => {
+              const memberships = await dbManager.getMembershipsForUser(
+                account._id
+              );
+              const allowedIds = new Set(
+                memberships.map((m) => m.productionId)
+              );
+              return allProductions.filter((p) => allowedIds.has(p._id));
+            })();
+
+        const totalItems = visibleProductions.length;
+        const productions = visibleProductions.slice(offset, offset + limit);
         let responseProductions: ProductionResponse[];
         if (!extended) {
           responseProductions = productions.map(({ _id, name }) => ({
@@ -244,6 +276,7 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production',
     {
+      preHandler: requireSuperAdmin(dbManager),
       schema: {
         description:
           'Retrieves 50 most recently created productions. Deprecated. Use /productionlist instead.',
@@ -278,6 +311,10 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId',
     {
+      preHandler: requireProductionMembership(
+        dbManager,
+        productionIdFromParams
+      ),
       schema: {
         description: 'Retrieves a Production.',
         response: {
@@ -315,6 +352,11 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId',
     {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
       schema: {
         description: 'Modify an existing Production line.',
         body: PatchProduction,
@@ -374,6 +416,10 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line',
     {
+      preHandler: requireProductionMembership(
+        dbManager,
+        productionIdFromParams
+      ),
       schema: {
         description: 'Retrieves all lines for a Production.',
         response: {
@@ -476,6 +522,10 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line/:lineId',
     {
+      preHandler: requireProductionMembership(
+        dbManager,
+        productionIdFromParams
+      ),
       schema: {
         description: 'Retrieves an active Production line.',
         response: {
@@ -535,6 +585,11 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line/:lineId',
     {
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
       schema: {
         description: 'Modify an existing Production line.',
         body: PatchLine,
@@ -660,6 +715,9 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/session',
     {
+      preHandler: requireProductionMembership(dbManager, (request) =>
+        Number((request.body as NewSession).productionId)
+      ),
       schema: {
         description:
           'Initiate connection protocol. Generates sdp offer describing remote SMB instance.',
@@ -851,7 +909,11 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId',
     {
-      preHandler: requireProductionRole(dbManager, ['admin'], productionIdFromParams),
+      preHandler: requireProductionRole(
+        dbManager,
+        ['admin'],
+        productionIdFromParams
+      ),
       schema: {
         description: 'Deletes a Production.',
         response: {
@@ -918,6 +980,10 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/production/:productionId/line/:lineId/participants',
     {
+      preHandler: requireProductionMembership(
+        dbManager,
+        productionIdFromParams
+      ),
       schema: {
         description: 'Long Poll Endpoint to get participant list.',
         response: {

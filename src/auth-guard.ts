@@ -44,3 +44,13 @@ export function requireProductionRole(
     }
   };
 }
+
+const ALL_ROLES: UserRole[] = ['admin', 'producer', 'participant'];
+
+/** Requires the caller to hold ANY role on the production (i.e. be a member), or be a super admin. Used to gate browsing/joining. */
+export function requireProductionMembership(
+  dbManager: DbManager,
+  getProductionId: (request: FastifyRequest) => number
+) {
+  return requireProductionRole(dbManager, ALL_ROLES, getProductionId);
+}
