@@ -50,7 +50,10 @@ const mockDbManager = {
   getMembershipsForUser: jest.fn().mockResolvedValue([]),
   createInvite: jest.fn(),
   getInviteByToken: jest.fn().mockResolvedValue(undefined),
-  markInviteUsed: jest.fn().mockResolvedValue(undefined)
+  markInviteUsed: jest.fn().mockResolvedValue(undefined),
+  getMembershipsForProduction: jest.fn().mockResolvedValue([]),
+  updateMembershipRole: jest.fn().mockResolvedValue(undefined),
+  deleteMembership: jest.fn().mockResolvedValue(true)
 };
 
 const mockProductionManager = {
@@ -223,22 +226,16 @@ describe('auth api', () => {
 
   describe('PATCH /auth/me', () => {
     test('updates the alias for the logged in user', async () => {
-      mockDbManager.getUserById
-        .mockResolvedValueOnce({
-          _id: 'user-1',
-          username: 'alice',
-          passwordHash: 'unused',
-          displayName: 'Alice',
-          createdAt: '2024-01-01T00:00:00.000Z'
-        })
-        .mockResolvedValueOnce({
-          _id: 'user-1',
-          username: 'alice',
-          passwordHash: 'unused',
-          displayName: 'Alice',
-          alias: 'Ally',
-          createdAt: '2024-01-01T00:00:00.000Z'
-        });
+      // The handler calls updateUserAlias, then builds the response from a
+      // single getUserById call - only one mock value should be queued here.
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        alias: 'Ally',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
       mockDbManager.getMembershipsForUser.mockResolvedValueOnce([]);
 
       const response = await server.inject({
@@ -476,6 +473,225 @@ describe('auth api', () => {
       expect(response.cookies.some((c: any) => c.name === 'auth_token')).toBe(
         true
       );
+    });
+  });
+
+  describe('GET /production/:productionId/members', () => {
+    test('rejects when not logged in', async () => {
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/members'
+      });
+      expect(response.statusCode).toBe(401);
+    });
+
+    test('rejects a producer (only admins manage members)', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-2',
+        username: 'bob',
+        passwordHash: 'unused',
+        displayName: 'Bob',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm2',
+        userId: 'user-2',
+        productionId: 1,
+        role: 'producer'
+      });
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/members',
+        headers: { cookie: cookieFor('user-2', 'bob') }
+      });
+      expect(response.statusCode).toBe(403);
+    });
+
+    test('lets a production admin list the members', async () => {
+      mockDbManager.getUserById
+        .mockResolvedValueOnce({
+          _id: 'user-1',
+          username: 'alice',
+          passwordHash: 'unused',
+          displayName: 'Alice',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        })
+        .mockResolvedValueOnce({
+          _id: 'user-2',
+          username: 'bob',
+          passwordHash: 'unused',
+          displayName: 'Bob',
+          alias: 'Bobby',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm1',
+        userId: 'user-1',
+        productionId: 1,
+        role: 'admin'
+      });
+      mockDbManager.getMembershipsForProduction.mockResolvedValueOnce([
+        { _id: 'm2', userId: 'user-2', productionId: 1, role: 'producer' }
+      ]);
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/members',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.members).toEqual([
+        {
+          userId: 'user-2',
+          username: 'bob',
+          displayName: 'Bob',
+          alias: 'Bobby',
+          role: 'producer'
+        }
+      ]);
+    });
+  });
+
+  describe('PATCH /production/:productionId/members/:userId', () => {
+    test('changes a member role', async () => {
+      mockDbManager.getUserById
+        .mockResolvedValueOnce({
+          _id: 'user-1',
+          username: 'alice',
+          passwordHash: 'unused',
+          displayName: 'Alice',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        })
+        .mockResolvedValueOnce({
+          _id: 'user-2',
+          username: 'bob',
+          passwordHash: 'unused',
+          displayName: 'Bob',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        });
+      mockDbManager.getMembership
+        .mockResolvedValueOnce({
+          _id: 'm1',
+          userId: 'user-1',
+          productionId: 1,
+          role: 'admin'
+        })
+        .mockResolvedValueOnce({
+          _id: 'm2',
+          userId: 'user-2',
+          productionId: 1,
+          role: 'participant'
+        });
+      mockDbManager.updateMembershipRole.mockResolvedValueOnce({
+        _id: 'm2',
+        userId: 'user-2',
+        productionId: 1,
+        role: 'admin'
+      });
+
+      const response = await server.inject({
+        method: 'PATCH',
+        url: '/api/v1/production/1/members/user-2',
+        headers: { cookie: cookieFor('user-1', 'alice') },
+        body: { role: 'admin' }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockDbManager.updateMembershipRole).toHaveBeenCalledWith(
+        'user-2',
+        1,
+        'admin'
+      );
+    });
+
+    test('returns 404 when the membership does not exist', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership
+        .mockResolvedValueOnce({
+          _id: 'm1',
+          userId: 'user-1',
+          productionId: 1,
+          role: 'admin'
+        })
+        .mockResolvedValueOnce(undefined);
+
+      const response = await server.inject({
+        method: 'PATCH',
+        url: '/api/v1/production/1/members/ghost',
+        headers: { cookie: cookieFor('user-1', 'alice') },
+        body: { role: 'admin' }
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('DELETE /production/:productionId/members/:userId', () => {
+    test('removes a member from the production', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership
+        .mockResolvedValueOnce({
+          _id: 'm1',
+          userId: 'user-1',
+          productionId: 1,
+          role: 'admin'
+        })
+        .mockResolvedValueOnce({
+          _id: 'm2',
+          userId: 'user-2',
+          productionId: 1,
+          role: 'participant'
+        });
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/production/1/members/user-2',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockDbManager.deleteMembership).toHaveBeenCalledWith('user-2', 1);
+    });
+
+    test('returns 404 when the membership does not exist', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership
+        .mockResolvedValueOnce({
+          _id: 'm1',
+          userId: 'user-1',
+          productionId: 1,
+          role: 'admin'
+        })
+        .mockResolvedValueOnce(undefined);
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/production/1/members/ghost',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(404);
     });
   });
 });

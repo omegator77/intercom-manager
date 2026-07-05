@@ -10,7 +10,6 @@ import fastify, { FastifyPluginCallback } from 'fastify';
 import apiAuth from './api_auth';
 import { getApiIngests } from './api_ingests';
 import { ApiProductionsOptions, getApiProductions } from './api_productions';
-import apiReAuth from './api_re_auth';
 import apiShare from './api_share';
 import apiWhip, { ApiWhipOptions } from './api_whip';
 import apiWhep, { ApiWhepOptions } from './api_whep';
@@ -153,7 +152,6 @@ export default async (opts: ApiOptions) => {
     dbManager: opts.dbManager
   });
   api.register(apiShare, { publicHost: opts.publicHost, prefix: 'api/v1' });
-  api.register(apiReAuth, { prefix: 'api/v1' });
   api.register(apiAuth, {
     prefix: 'api/v1',
     dbManager: opts.dbManager,

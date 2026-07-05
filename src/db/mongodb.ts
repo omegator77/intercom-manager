@@ -383,14 +383,45 @@ export class DbManagerMongoDb implements DbManager {
       .findOne({ userId, productionId })) as any | undefined;
   }
 
-  async getMembershipsForUser(
-    userId: string
-  ): Promise<ProductionMembership[]> {
+  async getMembershipsForUser(userId: string): Promise<ProductionMembership[]> {
     const db = this.client.db();
     return (await db
       .collection('memberships')
       .find({ userId })
       .toArray()) as any;
+  }
+
+  async getMembershipsForProduction(
+    productionId: number
+  ): Promise<ProductionMembership[]> {
+    const db = this.client.db();
+    return (await db
+      .collection('memberships')
+      .find({ productionId })
+      .toArray()) as any;
+  }
+
+  async updateMembershipRole(
+    userId: string,
+    productionId: number,
+    role: ProductionMembership['role']
+  ): Promise<ProductionMembership | undefined> {
+    const db = this.client.db();
+    await db
+      .collection('memberships')
+      .updateOne({ userId, productionId }, { $set: { role } });
+    return this.getMembership(userId, productionId);
+  }
+
+  async deleteMembership(
+    userId: string,
+    productionId: number
+  ): Promise<boolean> {
+    const db = this.client.db();
+    const result = await db
+      .collection('memberships')
+      .deleteOne({ userId, productionId });
+    return result.deletedCount === 1;
   }
 
   async createInvite(invite: Omit<Invite, '_id'>): Promise<Invite> {
