@@ -263,7 +263,8 @@ describe('Production API', () => {
     test('can paginate list of all productions', async () => {
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/productionlist'
+        url: '/api/v1/productionlist',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
@@ -282,13 +283,48 @@ describe('Production API', () => {
       });
       expect(response.statusCode).toBe(400);
     });
+    test('returns 401 when not logged in', async () => {
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/productionlist'
+      });
+      expect(response.statusCode).toBe(401);
+    });
+    test('a non-admin only sees productions they are a member of', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'member-1',
+        username: 'member',
+        passwordHash: 'unused',
+        displayName: 'Member',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembershipsForUser.mockResolvedValueOnce([
+        { _id: 'm', userId: 'member-1', productionId: 2, role: 'participant' }
+      ]);
+
+      const memberCookie = `auth_token=${server.jwt.sign({
+        userId: 'member-1',
+        username: 'member'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/productionlist',
+        headers: { cookie: memberCookie }
+      });
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.totalItems).toBe(1);
+      expect(body.productions).toEqual([{ name: 'prod-2', productionId: '2' }]);
+    });
   });
 
   describe('GET /production/:id', () => {
     test('can fetch a production with details', async () => {
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/1'
+        url: '/api/v1/production/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
@@ -301,7 +337,8 @@ describe('Production API', () => {
       );
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/999'
+        url: '/api/v1/production/999',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(500);
     });
@@ -312,6 +349,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'PATCH',
         url: '/api/v1/production/1',
+        headers: { cookie: adminCookie },
         body: { name: 'renamed' }
       });
       expect(response.statusCode).toBe(200);
@@ -326,6 +364,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'PATCH',
         url: '/api/v1/production/999',
+        headers: { cookie: adminCookie },
         body: { name: 'x' }
       });
       expect(response.statusCode).toBe(404);
@@ -336,7 +375,8 @@ describe('Production API', () => {
     test('can retrieve all lines from a production', async () => {
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/1/line'
+        url: '/api/v1/production/1/line',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
@@ -350,7 +390,8 @@ describe('Production API', () => {
       );
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/999/line'
+        url: '/api/v1/production/999/line',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(500);
     });
@@ -387,7 +428,8 @@ describe('Production API', () => {
     test('can retrieve a specific line id from a production', async () => {
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/1/line/1'
+        url: '/api/v1/production/1/line/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
@@ -397,7 +439,8 @@ describe('Production API', () => {
     test('error is thrown when trying to access a non existing line from a production', async () => {
       const response = await server.inject({
         method: 'GET',
-        url: '/api/v1/production/1/line/does-not-exist'
+        url: '/api/v1/production/1/line/does-not-exist',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(404);
     });
@@ -408,6 +451,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'PATCH',
         url: '/api/v1/production/1/line/1',
+        headers: { cookie: adminCookie },
         body: { name: 'line-renamed' }
       });
       expect(response.statusCode).toBe(200);
@@ -419,6 +463,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'PATCH',
         url: '/api/v1/production/1/line/miss',
+        headers: { cookie: adminCookie },
         body: { name: 'x' }
       });
       expect(response.statusCode).toBe(404);
@@ -453,6 +498,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/session',
+        headers: { cookie: adminCookie },
         body: mockNewSession
       });
       expect(response.statusCode).toBe(201);
@@ -468,6 +514,37 @@ describe('Production API', () => {
         body: {}
       });
       expect(response.statusCode).toBe(400);
+    });
+    test('returns 401 when not logged in', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/session',
+        body: mockNewSession
+      });
+      expect(response.statusCode).toBe(401);
+    });
+    test('returns 403 when logged in but not a member of the production', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'outsider-1',
+        username: 'outsider',
+        passwordHash: 'unused',
+        displayName: 'Outsider',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce(undefined);
+
+      const outsiderCookie = `auth_token=${server.jwt.sign({
+        userId: 'outsider-1',
+        username: 'outsider'
+      })}`;
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/session',
+        headers: { cookie: outsiderCookie },
+        body: mockNewSession
+      });
+      expect(response.statusCode).toBe(403);
     });
   });
 
@@ -523,7 +600,8 @@ describe('Production API', () => {
         });
       const response = await server.inject({
         method: 'POST',
-        url: '/api/v1/production/1/line/1/participants'
+        url: '/api/v1/production/1/line/1/participants',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       const body = response.body ? JSON.parse(response.body) : [];
@@ -537,7 +615,8 @@ describe('Production API', () => {
         });
       const response = await server.inject({
         method: 'POST',
-        url: '/api/v1/production/1/line/1/participants'
+        url: '/api/v1/production/1/line/1/participants',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(500);
       sessionsSpy.mockRestore();
