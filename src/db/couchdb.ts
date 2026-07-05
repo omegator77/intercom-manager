@@ -1,10 +1,28 @@
 import { Log } from '../log';
-import { Ingest, Line, NewIngest, Production, UserSession } from '../models';
+import {
+  Ingest,
+  Invite,
+  Line,
+  NewIngest,
+  Production,
+  ProductionMembership,
+  User,
+  UserSession
+} from '../models';
 import { assert } from '../utils';
 import { DbManager } from './interface';
 import nano from 'nano';
 
 const SESSION_PRUNE_SECONDS = 7_200;
+
+// Documents that live in the same database but are not productions/ingests,
+// so they must be excluded from the whole-database scans used below.
+const RESERVED_ID_PREFIXES = ['counter', 'session_', 'user_', 'membership_', 'invite_'];
+const isReservedId = (id: string): boolean => {
+  const lower = id.toLowerCase();
+  return RESERVED_ID_PREFIXES.some((prefix) => lower.indexOf(prefix) !== -1);
+};
+
 export class DbManagerCouchDb implements DbManager {
   private client;
   private nanoDb: nano.DocumentScope<unknown> | undefined;
@@ -96,11 +114,7 @@ export class DbManagerCouchDb implements DbManager {
     });
     // eslint-disable-next-line
     response.rows.forEach((row: any) => {
-      if (
-        row.doc._id.toLowerCase().indexOf('counter') === -1 &&
-        row.doc._id.toLowerCase().indexOf('session_') === -1
-      )
-        productions.push(row.doc);
+      if (!isReservedId(row.doc._id)) productions.push(row.doc);
     });
 
     // Apply offset and limit
@@ -114,11 +128,9 @@ export class DbManagerCouchDb implements DbManager {
       throw new Error('Database not connected');
     }
     const productions = await this.nanoDb.list({ include_docs: false });
-    // Filter out counter and session documents
+    // Filter out counter, session and account related documents
     const filteredRows = productions.rows.filter(
-      (row: any) =>
-        row.id.toLowerCase().indexOf('counter') === -1 &&
-        row.id.toLowerCase().indexOf('session_') === -1
+      (row: any) => !isReservedId(row.id)
     );
     return filteredRows.length;
   }
@@ -245,11 +257,7 @@ export class DbManagerCouchDb implements DbManager {
     });
     // eslint-disable-next-line
     response.rows.forEach((row: any) => {
-      if (
-        row.doc._id.toLowerCase().indexOf('counter') === -1 &&
-        row.doc._id.toLowerCase().indexOf('session_') === -1
-      )
-        ingests.push(row.doc);
+      if (!isReservedId(row.doc._id)) ingests.push(row.doc);
     });
 
     // Apply offset and limit
@@ -264,11 +272,9 @@ export class DbManagerCouchDb implements DbManager {
     }
 
     const ingests = await this.nanoDb.list({ include_docs: false });
-    // Filter out counter and session documents
+    // Filter out counter, session and account related documents
     const filteredRows = ingests.rows.filter(
-      (row: any) =>
-        row.id.toLowerCase().indexOf('counter') === -1 &&
-        row.id.toLowerCase().indexOf('session_') === -1
+      (row: any) => !isReservedId(row.id)
     );
     return filteredRows.length;
   }
@@ -481,6 +487,168 @@ export class DbManagerCouchDb implements DbManager {
       name: 'idx_prod_isActive',
       ddoc: 'idx_prod_isActive',
       type: 'json'
+    });
+  }
+
+  // Accounts, memberships and invites use a deterministic doc _id (a prefix
+  // plus a natural or random unique key) so CouchDB's own doc-id uniqueness
+  // guarantee enforces uniqueness, instead of a Mango index + racy read-check.
+
+  async createUser(user: Omit<User, '_id'>): Promise<User> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const _id = `user_${user.username.toLowerCase()}`;
+    const response = await this.nanoDb.insert({
+      ...user,
+      _id
+    } as unknown as nano.MaybeDocument);
+    if (!response.ok) throw new Error('Failed to insert user');
+    return { ...user, _id };
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    try {
+      const doc = await this.nanoDb.get(`user_${username.toLowerCase()}`);
+      return doc as any as User;
+    } catch (error: any) {
+      if (error.statusCode === 404) return undefined;
+      throw error;
+    }
+  }
+
+  async getUserById(userId: string): Promise<User | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    try {
+      const doc = await this.nanoDb.get(userId);
+      return doc as any as User;
+    } catch (error: any) {
+      if (error.statusCode === 404) return undefined;
+      throw error;
+    }
+  }
+
+  async updateUserAlias(
+    userId: string,
+    alias: string | undefined
+  ): Promise<User | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const existing = await this.nanoDb.get(userId);
+    const updated = { ...existing, alias };
+    if (!alias) delete (updated as any).alias;
+    await this.insertWithRetry(updated);
+    return this.getUserById(userId);
+  }
+
+  async getUsersCount(): Promise<number> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const response = await this.nanoDb.list({
+      startkey: 'user_',
+      endkey: 'user_￰'
+    });
+    return response.rows.length;
+  }
+
+  async createMembership(
+    membership: Omit<ProductionMembership, '_id'>
+  ): Promise<ProductionMembership> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const _id = `membership_${membership.userId}_${membership.productionId}`;
+    const response = await this.nanoDb.insert({
+      ...membership,
+      _id
+    } as unknown as nano.MaybeDocument);
+    if (!response.ok) throw new Error('Failed to insert membership');
+    return { ...membership, _id };
+  }
+
+  async getMembership(
+    userId: string,
+    productionId: number
+  ): Promise<ProductionMembership | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    try {
+      const doc = await this.nanoDb.get(`membership_${userId}_${productionId}`);
+      return doc as any as ProductionMembership;
+    } catch (error: any) {
+      if (error.statusCode === 404) return undefined;
+      throw error;
+    }
+  }
+
+  async getMembershipsForUser(
+    userId: string
+  ): Promise<ProductionMembership[]> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const response = await this.nanoDb.list({
+      startkey: `membership_${userId}_`,
+      endkey: `membership_${userId}_￰`,
+      include_docs: true
+    });
+    return response.rows.map((row: any) => row.doc) as ProductionMembership[];
+  }
+
+  async createInvite(invite: Omit<Invite, '_id'>): Promise<Invite> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const _id = `invite_${invite.token}`;
+    const response = await this.nanoDb.insert({
+      ...invite,
+      _id
+    } as unknown as nano.MaybeDocument);
+    if (!response.ok) throw new Error('Failed to insert invite');
+    return { ...invite, _id };
+  }
+
+  async getInviteByToken(token: string): Promise<Invite | undefined> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    try {
+      const doc = await this.nanoDb.get(`invite_${token}`);
+      return doc as any as Invite;
+    } catch (error: any) {
+      if (error.statusCode === 404) return undefined;
+      throw error;
+    }
+  }
+
+  async markInviteUsed(token: string, userId: string): Promise<void> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const existing = await this.nanoDb.get(`invite_${token}`);
+    await this.insertWithRetry({
+      ...existing,
+      usedBy: userId,
+      usedAt: new Date().toISOString()
     });
   }
 }

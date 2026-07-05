@@ -54,7 +54,18 @@ const mockDbManager = {
   getSession: jest.fn().mockResolvedValue(null),
   deleteUserSession: jest.fn().mockResolvedValue(true),
   updateSession: jest.fn().mockResolvedValue(true),
-  getSessionsByQuery: jest.fn().mockResolvedValue([])
+  getSessionsByQuery: jest.fn().mockResolvedValue([]),
+  createUser: jest.fn().mockResolvedValue({}),
+  getUserByUsername: jest.fn().mockResolvedValue(undefined),
+  getUserById: jest.fn().mockResolvedValue(undefined),
+  updateUserAlias: jest.fn().mockResolvedValue(undefined),
+  getUsersCount: jest.fn().mockResolvedValue(0),
+  createMembership: jest.fn().mockResolvedValue({}),
+  getMembership: jest.fn().mockResolvedValue(undefined),
+  getMembershipsForUser: jest.fn().mockResolvedValue([]),
+  createInvite: jest.fn().mockResolvedValue({}),
+  getInviteByToken: jest.fn().mockResolvedValue(undefined),
+  markInviteUsed: jest.fn().mockResolvedValue(undefined)
 };
 
 const coreFunctions = new CoreFunctions(

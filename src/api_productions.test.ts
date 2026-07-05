@@ -51,7 +51,18 @@ const mockDbManager = {
   getSession: jest.fn().mockResolvedValue(null),
   deleteUserSession: jest.fn().mockResolvedValue(true),
   updateSession: jest.fn().mockResolvedValue(true),
-  getSessionsByQuery: jest.fn().mockResolvedValue([])
+  getSessionsByQuery: jest.fn().mockResolvedValue([]),
+  createUser: jest.fn().mockResolvedValue({}),
+  getUserByUsername: jest.fn().mockResolvedValue(undefined),
+  getUserById: jest.fn().mockResolvedValue(undefined),
+  updateUserAlias: jest.fn().mockResolvedValue(undefined),
+  getUsersCount: jest.fn().mockResolvedValue(0),
+  createMembership: jest.fn().mockResolvedValue({}),
+  getMembership: jest.fn().mockResolvedValue(undefined),
+  getMembershipsForUser: jest.fn().mockResolvedValue([]),
+  createInvite: jest.fn().mockResolvedValue({}),
+  getInviteByToken: jest.fn().mockResolvedValue(undefined),
+  markInviteUsed: jest.fn().mockResolvedValue(undefined)
 };
 
 const mockIngestManager = {
@@ -179,6 +190,7 @@ describe('Production API', () => {
   let server: any;
   let setIntervalSpy: jest.SpyInstance<any, any>;
   let consoleErrorSpy: jest.SpyInstance<any, any>; // to remove negative test errors from console (console.error)
+  let adminCookie: string;
 
   // uses jest spy to keep track of 'setInterval' in api_productions, otherwise won't close properly
   beforeAll(() => {
@@ -196,11 +208,26 @@ describe('Production API', () => {
       smbServerBaseUrl: 'http://localhost',
       endpointIdleTimeout: '60',
       publicHost: 'https://example.com',
+      jwtSecret: 'test-secret',
       dbManager: mockDbManager,
       productionManager: mockProductionManager,
       ingestManager: mockIngestManager,
       coreFunctions: mockCoreFunctions
     });
+
+    // Production/line management endpoints require a logged in super admin.
+    mockDbManager.getUserById.mockResolvedValue({
+      _id: 'admin-1',
+      username: 'admin',
+      displayName: 'Admin',
+      passwordHash: 'unused',
+      isSuperAdmin: true,
+      createdAt: '2024-01-01T00:00:00.000Z'
+    });
+    adminCookie = `auth_token=${server.jwt.sign({
+      userId: 'admin-1',
+      username: 'admin'
+    })}`;
   });
 
   // mock server teardown
@@ -215,6 +242,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/production',
+        headers: { cookie: adminCookie },
         body: newProduction
       });
       expect(response.statusCode).toBe(200);
@@ -333,6 +361,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/production/1/line',
+        headers: { cookie: adminCookie },
         body: { name: 'newLine', programOutputLine: true }
       });
       expect(response.statusCode).toBe(200);
@@ -347,6 +376,7 @@ describe('Production API', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/production/1/line',
+        headers: { cookie: adminCookie },
         body: { name: 'l1', programOutputLine: false }
       });
       expect(response.statusCode).toBe(400);
@@ -399,7 +429,8 @@ describe('Production API', () => {
     test('can delete a line from a production', async () => {
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/production/1/line/1'
+        url: '/api/v1/production/1/line/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
       expect(response.body).toBe('deleted');
@@ -409,7 +440,8 @@ describe('Production API', () => {
       getUsersSpy.mockResolvedValueOnce([{ lineId: '1', isActive: true }]);
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/production/1/line/1'
+        url: '/api/v1/production/1/line/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(400);
       getUsersSpy.mockRestore();
@@ -443,7 +475,8 @@ describe('Production API', () => {
     test('can remove a production', async () => {
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/production/1'
+        url: '/api/v1/production/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
     });
@@ -451,7 +484,8 @@ describe('Production API', () => {
       mockProductionManager.deleteProduction.mockResolvedValueOnce(false);
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/production/1'
+        url: '/api/v1/production/1',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(500);
     });

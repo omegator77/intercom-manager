@@ -14,6 +14,13 @@ if (!process.env.SMB_ADDRESS) {
   console.warn('SMB_ADDRESS environment variable not set, using defaults');
 }
 
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error(
+    'JWT_SECRET environment variable is required to sign login sessions'
+  );
+}
+
 const ENDPOINT_IDLE_TIMEOUT_S: string =
   process.env.ENDPOINT_IDLE_TIMEOUT_S ?? '60';
 
@@ -49,6 +56,7 @@ if (dbUrl.protocol === 'mongodb:' || dbUrl.protocol === 'mongodb+srv:') {
     smbServerApiKey: process.env.SMB_APIKEY,
     publicHost: PUBLIC_HOST,
     whipAuthKey: process.env.WHIP_AUTH_KEY,
+    jwtSecret: JWT_SECRET,
     dbManager: dbManager,
     productionManager: productionManager,
     ingestManager: ingestManager,

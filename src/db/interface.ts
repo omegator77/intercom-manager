@@ -1,4 +1,13 @@
-import { Ingest, Line, NewIngest, Production, UserSession } from '../models';
+import {
+  Ingest,
+  Invite,
+  Line,
+  NewIngest,
+  Production,
+  ProductionMembership,
+  User,
+  UserSession
+} from '../models';
 
 export interface DbManager {
   connect(): Promise<void>;
@@ -28,4 +37,26 @@ export interface DbManager {
     updates: Partial<UserSession>
   ): Promise<boolean>;
   getSessionsByQuery(q: Partial<UserSession>): Promise<UserSession[]>;
+
+  createUser(user: Omit<User, '_id'>): Promise<User>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  getUserById(userId: string): Promise<User | undefined>;
+  updateUserAlias(
+    userId: string,
+    alias: string | undefined
+  ): Promise<User | undefined>;
+  getUsersCount(): Promise<number>;
+
+  createMembership(
+    membership: Omit<ProductionMembership, '_id'>
+  ): Promise<ProductionMembership>;
+  getMembership(
+    userId: string,
+    productionId: number
+  ): Promise<ProductionMembership | undefined>;
+  getMembershipsForUser(userId: string): Promise<ProductionMembership[]>;
+
+  createInvite(invite: Omit<Invite, '_id'>): Promise<Invite>;
+  getInviteByToken(token: string): Promise<Invite | undefined>;
+  markInviteUsed(token: string, userId: string): Promise<void>;
 }

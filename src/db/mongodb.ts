@@ -1,6 +1,16 @@
 import '../config/load-env';
+import { randomUUID } from 'node:crypto';
 import { MongoClient } from 'mongodb';
-import { Ingest, Line, NewIngest, Production, UserSession } from '../models';
+import {
+  Ingest,
+  Invite,
+  Line,
+  NewIngest,
+  Production,
+  ProductionMembership,
+  User,
+  UserSession
+} from '../models';
 import { assert } from '../utils';
 import { DbManager } from './interface';
 import { Log } from '../log';
@@ -75,6 +85,27 @@ export class DbManagerMongoDb implements DbManager {
     await safeCreate({ productionId: 1 });
     await safeCreate({ endpointId: 1 });
     await safeCreate({ productionId: 1, endpointId: 1 });
+
+    const safeCreateOn = async (
+      collectionName: string,
+      keys: Record<string, 1 | -1>,
+      opts: any = {}
+    ) => {
+      try {
+        await db.collection(collectionName).createIndex(keys, opts);
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (!/already exists/i.test(msg)) throw err;
+      }
+    };
+
+    await safeCreateOn('users', { username: 1 }, { unique: true });
+    await safeCreateOn('invites', { token: 1 }, { unique: true });
+    await safeCreateOn(
+      'memberships',
+      { userId: 1, productionId: 1 },
+      { unique: true }
+    );
   }
 
   async disconnect(): Promise<void> {
@@ -289,5 +320,101 @@ export class DbManagerMongoDb implements DbManager {
     delete (mongoQuery as any).lastSeen;
 
     return sessions.find(mongoQuery).toArray();
+  }
+
+  async createUser(user: Omit<User, '_id'>): Promise<User> {
+    const db = this.client.db();
+    const _id = randomUUID();
+    const doc = { ...user, _id };
+    await db.collection('users').insertOne(doc as any);
+    return doc;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const db = this.client.db();
+    return (await db.collection('users').findOne({ username })) as
+      | any
+      | undefined;
+  }
+
+  async getUserById(userId: string): Promise<User | undefined> {
+    const db = this.client.db();
+    return (await db.collection('users').findOne({ _id: userId as any })) as
+      | any
+      | undefined;
+  }
+
+  async updateUserAlias(
+    userId: string,
+    alias: string | undefined
+  ): Promise<User | undefined> {
+    const db = this.client.db();
+    await db
+      .collection('users')
+      .updateOne(
+        { _id: userId as any },
+        alias ? { $set: { alias } } : { $unset: { alias: '' } }
+      );
+    return this.getUserById(userId);
+  }
+
+  async getUsersCount(): Promise<number> {
+    const db = this.client.db();
+    return await db.collection('users').countDocuments();
+  }
+
+  async createMembership(
+    membership: Omit<ProductionMembership, '_id'>
+  ): Promise<ProductionMembership> {
+    const db = this.client.db();
+    const _id = randomUUID();
+    const doc = { ...membership, _id };
+    await db.collection('memberships').insertOne(doc as any);
+    return doc;
+  }
+
+  async getMembership(
+    userId: string,
+    productionId: number
+  ): Promise<ProductionMembership | undefined> {
+    const db = this.client.db();
+    return (await db
+      .collection('memberships')
+      .findOne({ userId, productionId })) as any | undefined;
+  }
+
+  async getMembershipsForUser(
+    userId: string
+  ): Promise<ProductionMembership[]> {
+    const db = this.client.db();
+    return (await db
+      .collection('memberships')
+      .find({ userId })
+      .toArray()) as any;
+  }
+
+  async createInvite(invite: Omit<Invite, '_id'>): Promise<Invite> {
+    const db = this.client.db();
+    const _id = randomUUID();
+    const doc = { ...invite, _id };
+    await db.collection('invites').insertOne(doc as any);
+    return doc;
+  }
+
+  async getInviteByToken(token: string): Promise<Invite | undefined> {
+    const db = this.client.db();
+    return (await db.collection('invites').findOne({ token })) as
+      | any
+      | undefined;
+  }
+
+  async markInviteUsed(token: string, userId: string): Promise<void> {
+    const db = this.client.db();
+    await db
+      .collection('invites')
+      .updateOne(
+        { token },
+        { $set: { usedBy: userId, usedAt: new Date().toISOString() } }
+      );
   }
 }
