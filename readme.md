@@ -71,6 +71,8 @@ The `osc_eyevinn_intercom_manager` resource requires these variables:
 | `ICE_SERVERS`               | Comma-separated list of ICE servers in the format: `turn:username:password@turn.example.com,stun:stun.example.com`. If no STUN server is provided, and WHIP endpoints are used, Google's default STUN server (`stun:stun.l.google.com:19302`) will be used. |
 | `MONGODB_CONNECTION_STRING` | DEPRECATED: MongoDB connection string                                                                                                                                                                                                                       |
 | `JWT_SECRET`                | Required. Signs the login session cookie. Generate with e.g. `openssl rand -hex 32`                                                                                                                                                                        |
+| `WHIP_AUTH_KEY`              | When set, WHIP ingest requests (`/whip/...`) must present it as a `Bearer` token. Unset by default, meaning WHIP is open to anyone who knows a production/line ID.                                                                                        |
+| `WHEP_AUTH_KEY`              | When set, WHEP egress/listen requests (`/whep/...`) must present it as a `Bearer` token. Unset by default, meaning WHEP is open to anyone who knows a production/line ID.                                                                                 |
 
 ## User accounts and roles
 
