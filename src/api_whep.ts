@@ -1,14 +1,23 @@
 import { Static, Type } from '@sinclair/typebox';
-import { FastifyPluginCallback } from 'fastify';
+import { FastifyPluginCallback, FastifyRequest } from 'fastify';
 import sdpTransform, { parse } from 'sdp-transform';
 import { v4 as uuidv4 } from 'uuid';
 import { CoreFunctions } from './api_productions_core_functions';
+import { requireProductionRole } from './auth-guard';
 import { Log } from './log';
 import { Line, WhipWhepRequest, WhipWhepResponse } from './models';
 import { ProductionManager } from './production_manager';
 import { SmbProtocol } from './smb';
 import { getIceServers } from './utils';
 import { DbManager } from './db/interface';
+import './auth-types';
+
+function productionIdFromParams(request: FastifyRequest): number {
+  return parseInt(
+    (request.params as { productionId: string }).productionId,
+    10
+  );
+}
 
 export interface ApiWhepOptions {
   smbServerBaseUrl: string;
@@ -76,6 +85,38 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
     }
     return true;
   }
+
+  // Lets production admins/producers read the configured WHEP_AUTH_KEY so it
+  // can be shown in the "Generate WHEP URL" UI. Deliberately not exposed
+  // anywhere unauthenticated or baked into the frontend build - that would
+  // publish the token to anyone visiting the site and defeat its purpose.
+  fastify.get<{
+    Params: { productionId: string };
+    Reply: { whepAuthKey: string | null };
+  }>(
+    '/production/:productionId/whep-auth-key',
+    {
+      preHandler: requireProductionRole(
+        opts.dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
+      schema: {
+        description:
+          'Get the configured WHEP_AUTH_KEY, if any, for use in a WHEP client.',
+        response: {
+          200: Type.Object({
+            whepAuthKey: Type.Union([Type.String(), Type.Null()])
+          }),
+          401: Type.Object({ message: Type.String() }),
+          403: Type.Object({ message: Type.String() })
+        }
+      }
+    },
+    async (_request, reply) => {
+      reply.send({ whepAuthKey: whepAuthKey ?? null });
+    }
+  );
 
   fastify.post<{
     Params: { productionId: string; lineId: string; username: string };

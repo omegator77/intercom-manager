@@ -1,5 +1,6 @@
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
+import api from './api';
 import { CoreFunctions } from './api_productions_core_functions';
 import apiWhep from './api_whep';
 import { ConnectionQueue } from './connection_queue';
@@ -393,6 +394,144 @@ describe('apiWhep', () => {
 
       expect(response.statusCode).toBe(405);
       expect(response.payload).toBe('Method not allowed');
+    });
+  });
+
+  // GET /production/:productionId/whep-auth-key needs the login cookie/JWT
+  // machinery that only the full app (registered in api.ts) sets up - the
+  // lightweight `Fastify()` + bare `apiWhep` harness used above never
+  // populates request.user, so this uses the full app instead.
+  describe('GET /production/:productionId/whep-auth-key', () => {
+    // The full app (unlike the bare `apiWhep` harness above) also registers
+    // api_productions.ts, which starts a raw setInterval poll loop on
+    // registration - stub it out so tests don't leak timers, same as
+    // api_productions.test.ts does.
+    let setIntervalSpy: jest.SpyInstance<any, any>;
+    beforeAll(() => {
+      setIntervalSpy = jest
+        .spyOn(global, 'setInterval')
+        .mockImplementation(jest.fn() as any);
+    });
+    afterAll(() => {
+      setIntervalSpy.mockRestore();
+    });
+
+    const mockIngestManagerForAuthKeyTests = {
+      load: jest.fn().mockResolvedValue(undefined),
+      startPolling: jest.fn()
+    } as any;
+
+    const createFullAppServer = async (whepAuthKey?: string) =>
+      api({
+        title: 'whep-auth-key test',
+        smbServerBaseUrl: 'http://localhost:3000',
+        endpointIdleTimeout: '60',
+        publicHost: 'https://example.com',
+        jwtSecret: 'test-secret',
+        dbManager: mockDbManager,
+        productionManager: mockProductionManager,
+        ingestManager: mockIngestManagerForAuthKeyTests,
+        coreFunctions: coreFunctions,
+        whepAuthKey
+      });
+
+    it('returns 401 when not logged in', async () => {
+      const server = await createFullAppServer('configured-key');
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whep-auth-key'
+      });
+      expect(response.statusCode).toBe(401);
+      await server.close();
+    });
+
+    it("returns 403 for a logged-in user who isn't admin/producer on the production", async () => {
+      const server = await createFullAppServer('configured-key');
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'participant-1',
+        username: 'p1',
+        passwordHash: 'unused',
+        displayName: 'Participant',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'participant-1',
+        productionId: 1,
+        role: 'participant'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'participant-1',
+        username: 'p1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whep-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(403);
+      await server.close();
+    });
+
+    it('returns the configured key for a production producer', async () => {
+      const server = await createFullAppServer('configured-key');
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'producer-1',
+        username: 'prod1',
+        passwordHash: 'unused',
+        displayName: 'Producer',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'producer-1',
+        productionId: 1,
+        role: 'producer'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'producer-1',
+        username: 'prod1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whep-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ whepAuthKey: 'configured-key' });
+      await server.close();
+    });
+
+    it('returns null when no WHEP_AUTH_KEY is configured', async () => {
+      const server = await createFullAppServer(undefined);
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'producer-1',
+        username: 'prod1',
+        passwordHash: 'unused',
+        displayName: 'Producer',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'producer-1',
+        productionId: 1,
+        role: 'producer'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'producer-1',
+        username: 'prod1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whep-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ whepAuthKey: null });
+      await server.close();
     });
   });
 });
