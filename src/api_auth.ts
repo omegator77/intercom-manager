@@ -18,7 +18,7 @@ import {
 } from './models';
 import { DbManager } from './db/interface';
 import { hashPassword, verifyPassword } from './password';
-import { requireProductionRole } from './auth-guard';
+import { getRequestUser, requireProductionRole } from './auth-guard';
 import { Log } from './log';
 import './auth-types';
 
@@ -76,6 +76,21 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
   }>(
     '/auth/login',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+          hook: 'onRequest',
+          errorResponseBuilder: (_req, context) => {
+            return {
+              statusCode: 429,
+              error: 'Too Many Requests',
+              message: 'Too many login attempts, please try again later',
+              expiresIn: context.after
+            };
+          }
+        }
+      },
       schema: {
         description: 'Log in with username and password.',
         body: LoginRequest,
@@ -173,6 +188,26 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
     },
     async (request, reply) => {
       const { productionId, role } = request.body;
+
+      // requireProductionRole above only confirms the caller is an admin or
+      // producer on this production, not that they're allowed to hand out
+      // the specific `role` being invited. Without this, a producer could
+      // invite someone (or themselves via a second account) as admin.
+      if (role === 'admin') {
+        const caller = await getRequestUser(dbManager, request);
+        if (!caller?.isSuperAdmin) {
+          const callerMembership = await dbManager.getMembership(
+            caller?._id ?? '',
+            productionId
+          );
+          if (callerMembership?.role !== 'admin') {
+            return reply.code(403).send({
+              message: 'Only production admins can create admin invites'
+            });
+          }
+        }
+      }
+
       const token = randomBytes(24).toString('base64url');
 
       const invite = await dbManager.createInvite({

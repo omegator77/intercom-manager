@@ -7,6 +7,7 @@ import {
   getRequestUser,
   requireProductionMembership,
   requireProductionRole,
+  requireSessionAccess,
   requireSuperAdmin
 } from './auth-guard';
 import './auth-types';
@@ -827,6 +828,7 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/session/:sessionId',
     {
+      preHandler: requireSessionAccess(dbManager),
       schema: {
         description:
           'Provide client local SDP description as request body to finalize connection protocol.',
@@ -948,6 +950,7 @@ const apiProductions: FastifyPluginCallback<ApiProductionsOptions> = (
   }>(
     '/session/:sessionId',
     {
+      preHandler: requireSessionAccess(dbManager),
       schema: {
         description: 'Deletes a Connection from ProductionManager.',
         response: {

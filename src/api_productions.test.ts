@@ -572,10 +572,11 @@ describe('Production API', () => {
   });
 
   describe('DELETE /session/:id', () => {
-    test('can remove a session', async () => {
+    test('can remove a session as an admin', async () => {
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/session/mock-session'
+        url: '/api/v1/session/mock-session',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(200);
     });
@@ -585,10 +586,108 @@ describe('Production API', () => {
         .mockResolvedValueOnce(false);
       const response = await server.inject({
         method: 'DELETE',
-        url: '/api/v1/session/mock-session'
+        url: '/api/v1/session/mock-session',
+        headers: { cookie: adminCookie }
       });
       expect(response.statusCode).toBe(500);
       removeSpy.mockRestore();
+    });
+    test('returns 401 when not logged in', async () => {
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/session/mock-session'
+      });
+      expect(response.statusCode).toBe(401);
+    });
+    test("returns 403 when logged in but not a member of the session's production", async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'outsider-1',
+        username: 'outsider',
+        passwordHash: 'unused',
+        displayName: 'Outsider',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getSession.mockResolvedValueOnce(mockUserSession);
+      mockDbManager.getMembership.mockResolvedValueOnce(undefined);
+
+      const outsiderCookie = `auth_token=${server.jwt.sign({
+        userId: 'outsider-1',
+        username: 'outsider'
+      })}`;
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/session/mock-session',
+        headers: { cookie: outsiderCookie }
+      });
+      expect(response.statusCode).toBe(403);
+    });
+    test('a member of the session\'s production can remove the session', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'member-1',
+        username: 'member',
+        passwordHash: 'unused',
+        displayName: 'Member',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getSession.mockResolvedValueOnce(mockUserSession);
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'member-1',
+        productionId: 1,
+        role: 'participant'
+      });
+      // The 500-path test above leaves deleteUserSession's default resolved
+      // value cleared (mockRestore on a plain jest.fn() resets rather than
+      // restores), so pin it explicitly instead of relying on shared state.
+      mockDbManager.deleteUserSession.mockResolvedValueOnce(true);
+
+      const memberCookie = `auth_token=${server.jwt.sign({
+        userId: 'member-1',
+        username: 'member'
+      })}`;
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/session/mock-session',
+        headers: { cookie: memberCookie }
+      });
+      expect(response.statusCode).toBe(200);
+    });
+  });
+
+  describe('PATCH /session/:id', () => {
+    test('returns 401 when not logged in', async () => {
+      const response = await server.inject({
+        method: 'PATCH',
+        url: '/api/v1/session/mock-session',
+        body: { sdpAnswer: 'v=0' }
+      });
+      expect(response.statusCode).toBe(401);
+    });
+    test("returns 403 when logged in but not a member of the session's production", async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'outsider-1',
+        username: 'outsider',
+        passwordHash: 'unused',
+        displayName: 'Outsider',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getSession.mockResolvedValueOnce(mockUserSession);
+      mockDbManager.getMembership.mockResolvedValueOnce(undefined);
+
+      const outsiderCookie = `auth_token=${server.jwt.sign({
+        userId: 'outsider-1',
+        username: 'outsider'
+      })}`;
+
+      const response = await server.inject({
+        method: 'PATCH',
+        url: '/api/v1/session/mock-session',
+        headers: { cookie: outsiderCookie },
+        body: { sdpAnswer: 'v=0' }
+      });
+      expect(response.statusCode).toBe(403);
     });
   });
 
