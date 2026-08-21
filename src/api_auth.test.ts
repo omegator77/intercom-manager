@@ -323,6 +323,71 @@ describe('auth api', () => {
       expect(body.token).toBe('abc123');
       expect(body.url).toBe('https://example.com/invite/abc123');
     });
+
+    test('rejects a producer trying to create an admin invite', async () => {
+      const carol = {
+        _id: 'user-3',
+        username: 'carol',
+        passwordHash: 'unused',
+        displayName: 'Carol',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      };
+      const producerMembership = {
+        _id: 'm3',
+        userId: 'user-3',
+        productionId: 1,
+        role: 'producer' as const
+      };
+      // requireProductionRole (preHandler) and the escalation check each
+      // look the caller up once.
+      mockDbManager.getUserById.mockResolvedValueOnce(carol);
+      mockDbManager.getUserById.mockResolvedValueOnce(carol);
+      mockDbManager.getMembership.mockResolvedValueOnce(producerMembership);
+      mockDbManager.getMembership.mockResolvedValueOnce(producerMembership);
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/invite',
+        headers: { cookie: cookieFor('user-3', 'carol') },
+        body: { productionId: 1, role: 'admin' }
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(mockDbManager.createInvite).not.toHaveBeenCalled();
+    });
+
+    test('still lets a producer create a producer invite', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-3',
+        username: 'carol',
+        passwordHash: 'unused',
+        displayName: 'Carol',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm3',
+        userId: 'user-3',
+        productionId: 1,
+        role: 'producer'
+      });
+      mockDbManager.createInvite.mockResolvedValueOnce({
+        _id: 'i2',
+        token: 'def456',
+        productionId: 1,
+        role: 'producer',
+        createdBy: 'user-3',
+        expiresAt: '2099-01-01T00:00:00.000Z'
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/invite',
+        headers: { cookie: cookieFor('user-3', 'carol') },
+        body: { productionId: 1, role: 'producer' }
+      });
+
+      expect(response.statusCode).toBe(200);
+    });
   });
 
   describe('GET /auth/invite/:token', () => {

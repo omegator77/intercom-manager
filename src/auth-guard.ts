@@ -54,3 +54,33 @@ export function requireProductionMembership(
 ) {
   return requireProductionRole(dbManager, ALL_ROLES, getProductionId);
 }
+
+/**
+ * Requires the caller to be a member of the production that owns the
+ * `:sessionId` route param, or be a super admin. The production isn't known
+ * upfront (unlike POST /session, which is guarded by productionId in the
+ * body) so it's looked up from the session record itself. Mirrors the same
+ * membership check POST /session already enforces when the session was
+ * created, so no legitimate caller of PATCH/DELETE /session/:sessionId is
+ * affected. If the session doesn't exist, membership can't be checked here;
+ * the route handler is left to report "not found" as it already does.
+ */
+export function requireSessionAccess(dbManager: DbManager) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = await getRequestUser(dbManager, request);
+    if (!user) {
+      return reply.code(401).send({ message: 'Login required' });
+    }
+    if (user.isSuperAdmin) return;
+
+    const { sessionId } = request.params as { sessionId: string };
+    const session = await dbManager.getSession(sessionId);
+    if (!session) return;
+
+    const productionId = parseInt(session.productionId, 10);
+    const membership = await dbManager.getMembership(user._id, productionId);
+    if (!membership) {
+      return reply.code(403).send({ message: 'Insufficient permissions' });
+    }
+  };
+}
