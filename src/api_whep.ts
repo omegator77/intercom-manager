@@ -1,4 +1,5 @@
 import { Static, Type } from '@sinclair/typebox';
+import { timingSafeEqual } from 'node:crypto';
 import { FastifyPluginCallback, FastifyRequest } from 'fastify';
 import sdpTransform, { parse } from 'sdp-transform';
 import { v4 as uuidv4 } from 'uuid';
@@ -26,7 +27,6 @@ export interface ApiWhepOptions {
   coreFunctions: CoreFunctions;
   productionManager: ProductionManager;
   dbManager: DbManager;
-  whepAuthKey?: string;
 }
 
 export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
@@ -60,23 +60,37 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
   const smb = new SmbProtocol();
   const smbServerApiKey = opts.smbServerApiKey || '';
   const coreFunctions = opts.coreFunctions;
-  const whepAuthKey = opts.whepAuthKey?.trim();
 
-  async function requireWhepAuth(request: any, reply: any): Promise<boolean> {
+  // Each production has its own WHEP bearer secret (lazily generated - see
+  // ProductionManager.getOrCreateWhepAuthKey), so a key handed out for one
+  // production can never be used to egress-listen on another's lines.
+  async function requireWhepAuth(
+    request: any,
+    reply: any,
+    productionId: number
+  ): Promise<boolean> {
+    const whepAuthKey = (
+      await productionManager.getOrCreateWhepAuthKey(productionId)
+    )?.trim();
     if (!whepAuthKey) {
-      return true; // auth disabled
+      return true; // auth disabled - production doesn't exist, or has none
     }
 
     const authHeader =
       request.headers['authorization'] || request.headers['Authorization'];
     const prefix = 'Bearer ';
 
-    if (
-      !authHeader ||
-      typeof authHeader !== 'string' ||
-      !authHeader.startsWith(prefix) ||
-      authHeader.slice(prefix.length).trim() !== whepAuthKey //checks if presented key is equal to actual key
-    ) {
+    const presentedKey =
+      typeof authHeader === 'string' && authHeader.startsWith(prefix)
+        ? authHeader.slice(prefix.length).trim()
+        : '';
+    const presentedBuf = Buffer.from(presentedKey);
+    const expectedBuf = Buffer.from(whepAuthKey);
+    const keysMatch =
+      presentedBuf.length === expectedBuf.length &&
+      timingSafeEqual(presentedBuf, expectedBuf);
+
+    if (!authHeader || typeof authHeader !== 'string' || !keysMatch) {
       reply
         .header('WWW-Authenticate', 'Bearer realm="whep", charset="UTF-8"')
         .code(401)
@@ -86,8 +100,8 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
     return true;
   }
 
-  // Lets production admins/producers read the configured WHEP_AUTH_KEY so it
-  // can be shown in the "Generate WHEP URL" UI. Deliberately not exposed
+  // Lets production admins/producers read that production's own WHEP key so
+  // it can be shown in the "Generate WHEP URL" UI. Deliberately not exposed
   // anywhere unauthenticated or baked into the frontend build - that would
   // publish the token to anyone visiting the site and defeat its purpose.
   fastify.get<{
@@ -103,7 +117,7 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
       ),
       schema: {
         description:
-          'Get the configured WHEP_AUTH_KEY, if any, for use in a WHEP client.',
+          "Get this production's WHEP auth key (generated on first request), for use in a WHEP client.",
         response: {
           200: Type.Object({
             whepAuthKey: Type.Union([Type.String(), Type.Null()])
@@ -113,7 +127,10 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
         }
       }
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      const productionId = productionIdFromParams(request);
+      const whepAuthKey =
+        await productionManager.getOrCreateWhepAuthKey(productionId);
       reply.send({ whepAuthKey: whepAuthKey ?? null });
     }
   );
@@ -154,7 +171,8 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
       }
     },
     async (request, reply) => {
-      if (!(await requireWhepAuth(request, reply))) return;
+      const productionIdNum = parseInt(request.params.productionId, 10);
+      if (!(await requireWhepAuth(request, reply, productionIdNum))) return;
       try {
         const { productionId, lineId, username } = request.params;
 
@@ -298,7 +316,8 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
       }
     },
     async (request, reply) => {
-      if (!(await requireWhepAuth(request, reply))) return;
+      const productionIdNum = parseInt(request.params.productionId, 10);
+      if (!(await requireWhepAuth(request, reply, productionIdNum))) return;
       try {
         const { sessionId } = request.params;
 

@@ -139,8 +139,7 @@ export default async (opts: ApiOptions) => {
     smbServerBaseUrl: opts.smbServerBaseUrl,
     coreFunctions: opts.coreFunctions,
     productionManager: opts.productionManager,
-    dbManager: opts.dbManager,
-    whipAuthKey: opts.whipAuthKey
+    dbManager: opts.dbManager
   });
   api.register(apiWhep, {
     prefix: 'api/v1',
@@ -149,8 +148,7 @@ export default async (opts: ApiOptions) => {
     smbServerBaseUrl: opts.smbServerBaseUrl,
     coreFunctions: opts.coreFunctions,
     productionManager: opts.productionManager,
-    dbManager: opts.dbManager,
-    whepAuthKey: opts.whepAuthKey
+    dbManager: opts.dbManager
   });
   api.register(apiShare, { publicHost: opts.publicHost, prefix: 'api/v1' });
   api.register(apiAuth, {

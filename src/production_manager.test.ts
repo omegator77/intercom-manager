@@ -414,4 +414,81 @@ describe('production_manager', () => {
       }
     });
   });
+
+  describe('per-production WHIP/WHEP auth keys', () => {
+    it('generates and persists a key when the production has none yet', async () => {
+      const dbManager = jest.requireMock('./db/interface');
+      const production = structuredClone(existingProduction);
+      dbManager.getProduction.mockResolvedValueOnce(production);
+      dbManager.updateProduction.mockImplementationOnce(
+        async (p: Production) => p
+      );
+
+      const productionManagerTest = new ProductionManager(dbManager);
+      const key = await productionManagerTest.getOrCreateWhepAuthKey(1);
+
+      expect(key).toBeTruthy();
+      expect(dbManager.updateProduction).toHaveBeenCalledWith(
+        expect.objectContaining({ whepAuthKey: key })
+      );
+    });
+
+    it('returns the existing key without writing again', async () => {
+      const dbManager = jest.requireMock('./db/interface');
+      dbManager.getProduction.mockResolvedValueOnce({
+        ...structuredClone(existingProduction),
+        whepAuthKey: 'already-set'
+      });
+
+      const productionManagerTest = new ProductionManager(dbManager);
+      const key = await productionManagerTest.getOrCreateWhepAuthKey(1);
+
+      expect(key).toBe('already-set');
+      expect(dbManager.updateProduction).not.toHaveBeenCalled();
+    });
+
+    it('gives different productions different keys, so one production cannot use the other\'s', async () => {
+      const dbManager = jest.requireMock('./db/interface');
+      dbManager.getProduction.mockImplementation(async (id: number) => ({
+        ...structuredClone(existingProduction),
+        _id: id
+      }));
+      dbManager.updateProduction.mockImplementation(async (p: Production) => p);
+
+      const productionManagerTest = new ProductionManager(dbManager);
+      const keyForProduction1 =
+        await productionManagerTest.getOrCreateWhepAuthKey(1);
+      const keyForProduction2 =
+        await productionManagerTest.getOrCreateWhepAuthKey(2);
+
+      expect(keyForProduction1).toBeTruthy();
+      expect(keyForProduction2).toBeTruthy();
+      expect(keyForProduction1).not.toBe(keyForProduction2);
+    });
+
+    it('keeps the WHIP key independent from the WHEP key on the same production', async () => {
+      const dbManager = jest.requireMock('./db/interface');
+      dbManager.getProduction.mockImplementation(async () =>
+        structuredClone(existingProduction)
+      );
+      dbManager.updateProduction.mockImplementation(async (p: Production) => p);
+
+      const productionManagerTest = new ProductionManager(dbManager);
+      const whipKey = await productionManagerTest.getOrCreateWhipAuthKey(1);
+      const whepKey = await productionManagerTest.getOrCreateWhepAuthKey(1);
+
+      expect(whipKey).not.toBe(whepKey);
+    });
+
+    it('returns undefined for a production that does not exist', async () => {
+      const dbManager = jest.requireMock('./db/interface');
+      dbManager.getProduction.mockResolvedValueOnce(undefined);
+
+      const productionManagerTest = new ProductionManager(dbManager);
+      const key = await productionManagerTest.getOrCreateWhepAuthKey(999);
+
+      expect(key).toBeUndefined();
+      expect(dbManager.updateProduction).not.toHaveBeenCalled();
+    });
+  });
 });

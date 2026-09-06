@@ -279,7 +279,15 @@ export const PatchLineResponse = Type.Omit(Line, ['smbConferenceId']);
 export const Production = Type.Object({
   _id: Type.Number(),
   name: Type.String(),
-  lines: Type.Array(Line)
+  lines: Type.Array(Line),
+  // Per-production secrets gating the WHIP (ingress) / WHEP (egress) bearer-
+  // auth endpoints. Lazily generated on first use - see
+  // ProductionManager.getOrCreateWhipAuthKey/getOrCreateWhepAuthKey. Never
+  // included in ProductionResponse/DetailedProductionResponse, so this never
+  // reaches a client except via the dedicated, role-gated key-retrieval
+  // endpoints.
+  whipAuthKey: Type.Optional(Type.String()),
+  whepAuthKey: Type.Optional(Type.String())
 });
 
 export const ProductionResponse = Type.Object({
@@ -288,8 +296,17 @@ export const ProductionResponse = Type.Object({
   lines: Type.Optional(Type.Array(LineResponse))
 });
 
-export const PatchProduction = Type.Omit(Production, ['_id', 'lines']);
-export const PatchProductionResponse = Type.Omit(Production, ['lines']);
+export const PatchProduction = Type.Omit(Production, [
+  '_id',
+  'lines',
+  'whipAuthKey',
+  'whepAuthKey'
+]);
+export const PatchProductionResponse = Type.Omit(Production, [
+  'lines',
+  'whipAuthKey',
+  'whepAuthKey'
+]);
 
 export const ProductionListResponse = Type.Object({
   productions: Type.Array(ProductionResponse),

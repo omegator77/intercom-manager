@@ -8,7 +8,7 @@ import {
   UserResponse,
   UserSession
 } from './models';
-import { assert } from './utils';
+import { assert, generateAuthKey } from './utils';
 import { Log } from './log';
 import { DbManager } from './db/interface';
 import { SmbProtocol } from './smb';
@@ -327,6 +327,38 @@ export class ProductionManager extends EventEmitter {
     return production;
   }
 
+  // Per-production WHIP/WHEP bearer-auth secrets, scoped so that a key
+  // handed out for one production can never be used against another.
+  // Generated on first use rather than at creation time, so productions
+  // created before this existed transparently pick up a key the first time
+  // anyone asks for it - no manual migration needed.
+  private async getOrCreateAuthKey(
+    productionId: number,
+    field: 'whipAuthKey' | 'whepAuthKey'
+  ): Promise<string | undefined> {
+    const production = await this.getProduction(productionId);
+    if (!production) return undefined;
+
+    const existing = production[field];
+    if (existing) return existing;
+
+    const key = generateAuthKey();
+    production[field] = key;
+    const updated = await this.dbManager.updateProduction(production);
+    // Fall back to the freshly generated key even if the write couldn't be
+    // confirmed (e.g. no-op $set edge case) - it's still valid to use for
+    // this request, and will be persisted again next time it's needed.
+    return updated?.[field] ?? key;
+  }
+
+  async getOrCreateWhipAuthKey(productionId: number): Promise<string | undefined> {
+    return this.getOrCreateAuthKey(productionId, 'whipAuthKey');
+  }
+
+  async getOrCreateWhepAuthKey(productionId: number): Promise<string | undefined> {
+    return this.getOrCreateAuthKey(productionId, 'whepAuthKey');
+  }
+
   /**
    * Delete the production from the db and local cache
    */
@@ -482,7 +514,7 @@ export class ProductionManager extends EventEmitter {
       const u: any = {
         sessionId: s._id?.toString?.() ?? '',
         name: s.name ?? '',
-        isActive: s.isWhip ? true : !!s.isActive,
+        isActive: !!s.isActive,
         isWhip: !!s.isWhip
       };
       if (typeof s.endpointId === 'string' && s.endpointId.length > 0)

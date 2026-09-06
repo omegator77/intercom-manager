@@ -1,5 +1,6 @@
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
+import api from './api';
 import { CoreFunctions } from './api_productions_core_functions';
 import apiWhip from './api_whip';
 import { ConnectionQueue } from './connection_queue';
@@ -15,6 +16,8 @@ const mockProductionManager = {
   updateUserLastSeen: jest.fn().mockReturnValue(true),
   removeUserSession: jest.fn().mockReturnValue('session-id'),
   getProduction: jest.fn().mockResolvedValue({ lines: [{ id: 'line1' }] }),
+  getOrCreateWhepAuthKey: jest.fn().mockResolvedValue(undefined),
+  getOrCreateWhipAuthKey: jest.fn().mockResolvedValue(undefined),
   checkUserStatus: jest.fn(),
   load: jest.fn().mockResolvedValue(undefined),
   createProduction: jest.fn().mockResolvedValue({}),
@@ -114,6 +117,8 @@ const defaultOptions = {
 const createTestServer = async () => {
   const fastify = Fastify();
 
+  mockProductionManager.getOrCreateWhipAuthKey.mockResolvedValue(undefined);
+
   fastify.addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
@@ -137,8 +142,9 @@ const createAuthServer = async () => {
   mockDbManager.getSession.mockResolvedValue({
     _id: 'mock-session-id'
   } as any);
+  mockProductionManager.getOrCreateWhipAuthKey.mockResolvedValue('secret-123');
 
-  fastify.register(apiWhip, { ...defaultOptions, whipAuthKey: 'secret-123' });
+  fastify.register(apiWhip, defaultOptions);
   await fastify.ready();
   return fastify;
 };
@@ -394,6 +400,147 @@ describe('apiWhip', () => {
 
       expect(response.statusCode).toBe(405);
       expect(response.payload).toBe('Method not allowed');
+    });
+  });
+
+  // GET /production/:productionId/whip-auth-key needs the login cookie/JWT
+  // machinery that only the full app (registered in api.ts) sets up - the
+  // lightweight `Fastify()` + bare `apiWhip` harness used above never
+  // populates request.user, so this uses the full app instead.
+  describe('GET /production/:productionId/whip-auth-key', () => {
+    // The full app (unlike the bare `apiWhip` harness above) also registers
+    // api_productions.ts, which starts a raw setInterval poll loop on
+    // registration - stub it out so tests don't leak timers, same as
+    // api_productions.test.ts does.
+    let setIntervalSpy: jest.SpyInstance<any, any>;
+    beforeAll(() => {
+      setIntervalSpy = jest
+        .spyOn(global, 'setInterval')
+        .mockImplementation(jest.fn() as any);
+    });
+    afterAll(() => {
+      setIntervalSpy.mockRestore();
+    });
+
+    const mockIngestManagerForAuthKeyTests = {
+      load: jest.fn().mockResolvedValue(undefined),
+      startPolling: jest.fn()
+    } as any;
+
+    const createFullAppServer = async (whipAuthKey?: string) => {
+      mockProductionManager.getOrCreateWhipAuthKey.mockResolvedValue(
+        whipAuthKey
+      );
+      return api({
+        title: 'whip-auth-key test',
+        smbServerBaseUrl: 'http://localhost:3000',
+        endpointIdleTimeout: '60',
+        publicHost: 'https://example.com',
+        jwtSecret: 'test-secret',
+        dbManager: mockDbManager,
+        productionManager: mockProductionManager,
+        ingestManager: mockIngestManagerForAuthKeyTests,
+        coreFunctions: coreFunctions
+      });
+    };
+
+    it('returns 401 when not logged in', async () => {
+      const server = await createFullAppServer('configured-key');
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whip-auth-key'
+      });
+      expect(response.statusCode).toBe(401);
+      await server.close();
+    });
+
+    it("returns 403 for a logged-in user who isn't admin/producer on the production", async () => {
+      const server = await createFullAppServer('configured-key');
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'participant-1',
+        username: 'p1',
+        passwordHash: 'unused',
+        displayName: 'Participant',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'participant-1',
+        productionId: 1,
+        role: 'participant'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'participant-1',
+        username: 'p1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whip-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(403);
+      await server.close();
+    });
+
+    it('returns the key for a production producer', async () => {
+      const server = await createFullAppServer('configured-key');
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'producer-1',
+        username: 'prod1',
+        passwordHash: 'unused',
+        displayName: 'Producer',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'producer-1',
+        productionId: 1,
+        role: 'producer'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'producer-1',
+        username: 'prod1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whip-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ whipAuthKey: 'configured-key' });
+      await server.close();
+    });
+
+    it('returns null when a key could not be produced for the production', async () => {
+      const server = await createFullAppServer(undefined);
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'producer-1',
+        username: 'prod1',
+        passwordHash: 'unused',
+        displayName: 'Producer',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getMembership.mockResolvedValueOnce({
+        _id: 'm',
+        userId: 'producer-1',
+        productionId: 1,
+        role: 'producer'
+      });
+      const cookie = `auth_token=${server.jwt.sign({
+        userId: 'producer-1',
+        username: 'prod1'
+      })}`;
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/production/1/whip-auth-key',
+        headers: { cookie }
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ whipAuthKey: null });
+      await server.close();
     });
   });
 });

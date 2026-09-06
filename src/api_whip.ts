@@ -1,14 +1,24 @@
 import { Static, Type } from '@sinclair/typebox';
-import { FastifyPluginCallback } from 'fastify';
+import { timingSafeEqual } from 'node:crypto';
+import { FastifyPluginCallback, FastifyRequest } from 'fastify';
 import sdpTransform, { parse } from 'sdp-transform';
 import { v4 as uuidv4 } from 'uuid';
 import { CoreFunctions } from './api_productions_core_functions';
+import { requireProductionRole } from './auth-guard';
 import { Log } from './log';
 import { Line, WhipWhepRequest, WhipWhepResponse } from './models';
 import { ProductionManager } from './production_manager';
 import { SmbProtocol } from './smb';
 import { getIceServers } from './utils';
 import { DbManager } from './db/interface';
+import './auth-types';
+
+function productionIdFromParams(request: FastifyRequest): number {
+  return parseInt(
+    (request.params as { productionId: string }).productionId,
+    10
+  );
+}
 
 export interface ApiWhipOptions {
   smbServerBaseUrl: string;
@@ -17,7 +27,6 @@ export interface ApiWhipOptions {
   coreFunctions: CoreFunctions;
   productionManager: ProductionManager;
   dbManager: DbManager;
-  whipAuthKey?: string;
 }
 
 export const apiWhip: FastifyPluginCallback<ApiWhipOptions> = (
@@ -51,23 +60,37 @@ export const apiWhip: FastifyPluginCallback<ApiWhipOptions> = (
   const smb = new SmbProtocol();
   const smbServerApiKey = opts.smbServerApiKey || '';
   const coreFunctions = opts.coreFunctions;
-  const whipAuthKey = opts.whipAuthKey?.trim();
 
-  async function requireWhipAuth(request: any, reply: any): Promise<boolean> {
+  // Each production has its own WHIP bearer secret (lazily generated - see
+  // ProductionManager.getOrCreateWhipAuthKey), so a key handed out for one
+  // production can never be used to inject audio into another's lines.
+  async function requireWhipAuth(
+    request: any,
+    reply: any,
+    productionId: number
+  ): Promise<boolean> {
+    const whipAuthKey = (
+      await productionManager.getOrCreateWhipAuthKey(productionId)
+    )?.trim();
     if (!whipAuthKey) {
-      return true; // auth disabled
+      return true; // auth disabled - production doesn't exist, or has none
     }
 
     const authHeader =
       request.headers['authorization'] || request.headers['Authorization'];
     const prefix = 'Bearer ';
 
-    if (
-      !authHeader ||
-      typeof authHeader !== 'string' ||
-      !authHeader.startsWith(prefix) ||
-      authHeader.slice(prefix.length).trim() !== whipAuthKey //checks if presented key is equal to actual key
-    ) {
+    const presentedKey =
+      typeof authHeader === 'string' && authHeader.startsWith(prefix)
+        ? authHeader.slice(prefix.length).trim()
+        : '';
+    const presentedBuf = Buffer.from(presentedKey);
+    const expectedBuf = Buffer.from(whipAuthKey);
+    const keysMatch =
+      presentedBuf.length === expectedBuf.length &&
+      timingSafeEqual(presentedBuf, expectedBuf);
+
+    if (!authHeader || typeof authHeader !== 'string' || !keysMatch) {
       reply
         .header('WWW-Authenticate', 'Bearer realm="whip", charset="UTF-8"')
         .code(401)
@@ -76,6 +99,41 @@ export const apiWhip: FastifyPluginCallback<ApiWhipOptions> = (
     }
     return true;
   }
+
+  // Lets production admins/producers read that production's own WHIP key so
+  // it can be handed to whoever is configuring a hardware/software WHIP
+  // encoder for that production. Deliberately not exposed anywhere
+  // unauthenticated or baked into the frontend build.
+  fastify.get<{
+    Params: { productionId: string };
+    Reply: { whipAuthKey: string | null };
+  }>(
+    '/production/:productionId/whip-auth-key',
+    {
+      preHandler: requireProductionRole(
+        opts.dbManager,
+        ['admin', 'producer'],
+        productionIdFromParams
+      ),
+      schema: {
+        description:
+          "Get this production's WHIP auth key (generated on first request), for use in a WHIP client.",
+        response: {
+          200: Type.Object({
+            whipAuthKey: Type.Union([Type.String(), Type.Null()])
+          }),
+          401: Type.Object({ message: Type.String() }),
+          403: Type.Object({ message: Type.String() })
+        }
+      }
+    },
+    async (request, reply) => {
+      const productionId = productionIdFromParams(request);
+      const whipAuthKey =
+        await productionManager.getOrCreateWhipAuthKey(productionId);
+      reply.send({ whipAuthKey: whipAuthKey ?? null });
+    }
+  );
 
   fastify.post<{
     Params: { productionId: string; lineId: string; username: string };
@@ -113,7 +171,8 @@ export const apiWhip: FastifyPluginCallback<ApiWhipOptions> = (
       }
     },
     async (request, reply) => {
-      if (!(await requireWhipAuth(request, reply))) return;
+      const productionIdNum = parseInt(request.params.productionId, 10);
+      if (!(await requireWhipAuth(request, reply, productionIdNum))) return;
       try {
         const { productionId, lineId, username } = request.params;
 
@@ -258,7 +317,8 @@ export const apiWhip: FastifyPluginCallback<ApiWhipOptions> = (
       }
     },
     async (request, reply) => {
-      if (!(await requireWhipAuth(request, reply))) return;
+      const productionIdNum = parseInt(request.params.productionId, 10);
+      if (!(await requireWhipAuth(request, reply, productionIdNum))) return;
       try {
         const { sessionId } = request.params;
 

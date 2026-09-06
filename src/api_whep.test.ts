@@ -15,6 +15,8 @@ const mockProductionManager = {
   updateUserLastSeen: jest.fn().mockReturnValue(true),
   removeUserSession: jest.fn().mockReturnValue('session-id'),
   getProduction: jest.fn().mockResolvedValue({ lines: [{ id: 'line1' }] }),
+  getOrCreateWhepAuthKey: jest.fn().mockResolvedValue(undefined),
+  getOrCreateWhipAuthKey: jest.fn().mockResolvedValue(undefined),
   checkUserStatus: jest.fn(),
   load: jest.fn().mockResolvedValue(undefined),
   createProduction: jest.fn().mockResolvedValue({}),
@@ -114,6 +116,8 @@ const defaultOptions = {
 const createTestServer = async () => {
   const fastify = Fastify();
 
+  mockProductionManager.getOrCreateWhepAuthKey.mockResolvedValue(undefined);
+
   fastify.addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
@@ -137,8 +141,9 @@ const createAuthServer = async () => {
   mockDbManager.getSession.mockResolvedValue({
     _id: 'mock-session-id'
   } as any);
+  mockProductionManager.getOrCreateWhepAuthKey.mockResolvedValue('secret-123');
 
-  fastify.register(apiWhep, { ...defaultOptions, whepAuthKey: 'secret-123' });
+  fastify.register(apiWhep, defaultOptions);
   await fastify.ready();
   return fastify;
 };
@@ -421,8 +426,11 @@ describe('apiWhep', () => {
       startPolling: jest.fn()
     } as any;
 
-    const createFullAppServer = async (whepAuthKey?: string) =>
-      api({
+    const createFullAppServer = async (whepAuthKey?: string) => {
+      mockProductionManager.getOrCreateWhepAuthKey.mockResolvedValue(
+        whepAuthKey
+      );
+      return api({
         title: 'whep-auth-key test',
         smbServerBaseUrl: 'http://localhost:3000',
         endpointIdleTimeout: '60',
@@ -431,9 +439,9 @@ describe('apiWhep', () => {
         dbManager: mockDbManager,
         productionManager: mockProductionManager,
         ingestManager: mockIngestManagerForAuthKeyTests,
-        coreFunctions: coreFunctions,
-        whepAuthKey
+        coreFunctions: coreFunctions
       });
+    };
 
     it('returns 401 when not logged in', async () => {
       const server = await createFullAppServer('configured-key');
@@ -504,7 +512,7 @@ describe('apiWhep', () => {
       await server.close();
     });
 
-    it('returns null when no WHEP_AUTH_KEY is configured', async () => {
+    it('returns null when a key could not be produced for the production', async () => {
       const server = await createFullAppServer(undefined);
       mockDbManager.getUserById.mockResolvedValueOnce({
         _id: 'producer-1',
