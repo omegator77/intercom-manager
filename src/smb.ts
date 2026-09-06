@@ -167,6 +167,31 @@ export class SmbProtocol {
     return smbEndpointDescription;
   }
 
+  // DELETE /conferences/{conferenceId}/{endpointId} - see
+  // https://github.com/finos/SymphonyMediaBridge/wiki/HTTP-API. Used to
+  // release an endpoint immediately (e.g. after a failed SDP negotiation)
+  // instead of leaving it to expire via its idle timeout.
+  async deleteEndpoint(
+    smbUrl: string,
+    conferenceId: string,
+    endpointId: string,
+    smbKey: string
+  ): Promise<void> {
+    const url = smbUrl + conferenceId + '/' + endpointId;
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        ...(smbKey !== '' && { Authorization: `Bearer ${smbKey}` })
+      }
+    });
+
+    if (!response.ok && response.status !== 404) {
+      throw new Error(
+        `Failed to delete endpoint ${endpointId} in conference ${conferenceId}: ${response.statusText}`
+      );
+    }
+  }
+
   async configureEndpoint(
     smbUrl: string,
     conferenceId: string,

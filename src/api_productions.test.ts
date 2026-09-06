@@ -56,6 +56,7 @@ const mockDbManager = {
   getUserByUsername: jest.fn().mockResolvedValue(undefined),
   getUserById: jest.fn().mockResolvedValue(undefined),
   updateUserAlias: jest.fn().mockResolvedValue(undefined),
+  bumpTokenVersion: jest.fn().mockResolvedValue(undefined),
   getUsersCount: jest.fn().mockResolvedValue(0),
   createMembership: jest.fn().mockResolvedValue({}),
   getMembership: jest.fn().mockResolvedValue(undefined),

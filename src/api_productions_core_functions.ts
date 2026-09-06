@@ -7,6 +7,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { Connection } from './connection';
 import { ConnectionQueue } from './connection_queue';
+import { Log } from './log';
 import {
   Fmtp,
   MediaStreamsInfoSsrc,
@@ -112,6 +113,32 @@ export class CoreFunctions {
     );
 
     return endpoint;
+  }
+
+  // Best-effort release of an endpoint allocated for a WHIP/WHEP request
+  // that then failed SDP negotiation, so it doesn't sit around consuming
+  // SMB capacity until its idle timeout expires. Swallows its own errors -
+  // this runs from a catch block and must never mask the original failure.
+  async deleteEndpoint(
+    smb: SmbProtocol,
+    smbServerUrl: string,
+    smbServerApiKey: string,
+    smbConferenceId: string,
+    endpointId: string
+  ): Promise<void> {
+    try {
+      await smb.deleteEndpoint(
+        smbServerUrl,
+        smbConferenceId,
+        endpointId,
+        smbServerApiKey
+      );
+    } catch (err) {
+      Log().warn(
+        `Failed to clean up SMB endpoint ${endpointId} after a failed negotiation`,
+        err
+      );
+    }
   }
 
   async configureEndpointForWhipWhep(

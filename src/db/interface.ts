@@ -45,6 +45,7 @@ export interface DbManager {
     userId: string,
     alias: string | undefined
   ): Promise<User | undefined>;
+  bumpTokenVersion(userId: string): Promise<void>;
   getUsersCount(): Promise<number>;
 
   createMembership(

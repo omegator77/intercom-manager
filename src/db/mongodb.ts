@@ -356,6 +356,13 @@ export class DbManagerMongoDb implements DbManager {
     return this.getUserById(userId);
   }
 
+  async bumpTokenVersion(userId: string): Promise<void> {
+    const db = this.client.db();
+    await db
+      .collection('users')
+      .updateOne({ _id: userId as any }, { $inc: { tokenVersion: 1 } });
+  }
+
   async getUsersCount(): Promise<number> {
     const db = this.client.db();
     return await db.collection('users').countDocuments();

@@ -6,6 +6,12 @@ import '@fastify/jwt';
 export interface AuthenticatedUser {
   userId: string;
   username: string;
+  // Copied from User.tokenVersion at sign time. Checked against the current
+  // DB value on every request (see api.ts's onRequest hook) so that logout
+  // can invalidate a token immediately instead of waiting out its 7-day
+  // expiry - logout bumps the stored value, which makes every
+  // already-issued token's copy stale.
+  tokenVersion: number;
 }
 
 declare module '@fastify/jwt' {

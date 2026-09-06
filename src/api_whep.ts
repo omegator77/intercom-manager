@@ -173,6 +173,22 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
     async (request, reply) => {
       const productionIdNum = parseInt(request.params.productionId, 10);
       if (!(await requireWhepAuth(request, reply, productionIdNum))) return;
+      // Tracked outside the try block so the catch/406 branches below can
+      // release the SMB endpoint immediately on failure, instead of leaving
+      // it to expire on its own after endpointIdleTimeout.
+      let smbConferenceId: string | undefined;
+      let endpointId: string | undefined;
+      const cleanupEndpoint = async () => {
+        if (smbConferenceId && endpointId) {
+          await coreFunctions.deleteEndpoint(
+            smb,
+            smbServerUrl,
+            smbServerApiKey,
+            smbConferenceId,
+            endpointId
+          );
+        }
+      };
       try {
         const { productionId, lineId, username } = request.params;
 
@@ -188,10 +204,10 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
 
         // Create a unique session ID for this WHEP connection
         const sessionId = uuidv4();
-        const endpointId = uuidv4();
+        endpointId = uuidv4();
 
         // Create conference and endpoint in SMB
-        const smbConferenceId = await coreFunctions.createConferenceForLine(
+        smbConferenceId = await coreFunctions.createConferenceForLine(
           smb,
           smbServerUrl,
           smbServerApiKey,
@@ -243,6 +259,7 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
           );
 
           if (missingMids.length > 0) {
+            await cleanupEndpoint();
             return reply.code(406).send({
               error: `One or more m= sections could not be negotiated: ${missingMids.join(
                 ', '
@@ -251,6 +268,7 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
           }
         } catch (err) {
           Log().error('Malformed SDP:', err);
+          await cleanupEndpoint();
           return reply.code(400).send({ error: 'Malformed SDP' });
         }
 
@@ -294,6 +312,7 @@ export const apiWhep: FastifyPluginCallback<ApiWhepOptions> = (
         await reply.code(201).send(sdpAnswer);
       } catch (err) {
         Log().error(err);
+        await cleanupEndpoint();
         reply
           .code(500)
           .send({ error: `Failed to process WHEP request: ${err}` });

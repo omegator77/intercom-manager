@@ -105,7 +105,11 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
       }
 
       const token = fastify.jwt.sign(
-        { userId: user._id, username: user.username },
+        {
+          userId: user._id,
+          username: user.username,
+          tokenVersion: user.tokenVersion ?? 0
+        },
         { expiresIn: '7d' }
       );
       reply.cookie(AUTH_COOKIE_NAME, token, {
@@ -120,7 +124,13 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
     }
   );
 
-  fastify.post('/auth/logout', async (_request, reply) => {
+  // Bumping tokenVersion makes every previously issued JWT stale (checked
+  // in api.ts's onRequest hook), so logout revokes the session everywhere
+  // immediately instead of only clearing the cookie in this one browser.
+  fastify.post('/auth/logout', async (request, reply) => {
+    if (request.user) {
+      await dbManager.bumpTokenVersion(request.user.userId);
+    }
     reply.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
     reply.code(204).send();
   });
@@ -269,6 +279,21 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
   }>(
     '/auth/invite/:token/accept',
     {
+      config: {
+        rateLimit: {
+          max: 10,
+          timeWindow: '1 minute',
+          hook: 'onRequest',
+          errorResponseBuilder: (_req, context) => {
+            return {
+              statusCode: 429,
+              error: 'Too Many Requests',
+              message: 'Too many attempts, please try again later',
+              expiresIn: context.after
+            };
+          }
+        }
+      },
       schema: {
         description:
           'Accept an invite: create an account and join the production.',
@@ -277,7 +302,8 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
           200: MeResponse,
           400: ErrorResponse,
           404: ErrorResponse,
-          410: ErrorResponse
+          410: ErrorResponse,
+          429: ErrorResponse
         }
       }
     },
@@ -312,7 +338,11 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
       await dbManager.markInviteUsed(invite.token, user._id);
 
       const token = fastify.jwt.sign(
-        { userId: user._id, username: user.username },
+        {
+          userId: user._id,
+          username: user.username,
+          tokenVersion: user.tokenVersion ?? 0
+        },
         { expiresIn: '7d' }
       );
       reply.cookie(AUTH_COOKIE_NAME, token, {

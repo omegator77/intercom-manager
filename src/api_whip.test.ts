@@ -62,6 +62,7 @@ const mockDbManager = {
   getUserByUsername: jest.fn().mockResolvedValue(undefined),
   getUserById: jest.fn().mockResolvedValue(undefined),
   updateUserAlias: jest.fn().mockResolvedValue(undefined),
+  bumpTokenVersion: jest.fn().mockResolvedValue(undefined),
   getUsersCount: jest.fn().mockResolvedValue(0),
   createMembership: jest.fn().mockResolvedValue({}),
   getMembership: jest.fn().mockResolvedValue(undefined),
@@ -200,6 +201,52 @@ describe('apiWhip', () => {
 
       expect(response.statusCode).toBe(406);
       expect(response.json().error).toMatch(/could not be negotiated/);
+    });
+
+    it('releases the SMB endpoint when negotiation is rejected with 406', async () => {
+      (coreFunctions.createWhipWhepAnswer as jest.Mock).mockResolvedValueOnce(
+        'v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\n'
+      );
+      const deleteEndpointSpy = jest.spyOn(coreFunctions, 'deleteEndpoint');
+
+      const fastify = await createTestServer();
+      await fastify.inject({
+        method: 'POST',
+        url: '/whip/prod1/line1/testuser',
+        headers: { 'content-type': 'application/sdp' },
+        payload:
+          'v=0\r\n' +
+          'o=- 0 0 IN IP4 127.0.0.1\r\n' +
+          's=-\r\n' +
+          't=0 0\r\n' +
+          'm=audio 9 UDP/TLS/RTP/SAVPF 96\r\n' +
+          'a=mid:audio0\r\n'
+      });
+
+      expect(deleteEndpointSpy).toHaveBeenCalledTimes(1);
+      expect(deleteEndpointSpy).toHaveBeenLastCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        'mock-conference-id',
+        expect.any(String)
+      );
+      deleteEndpointSpy.mockRestore();
+    });
+
+    it('does not try to release an endpoint that was never allocated', async () => {
+      const deleteEndpointSpy = jest.spyOn(coreFunctions, 'deleteEndpoint');
+
+      const fastify = await createTestServer();
+      await fastify.inject({
+        method: 'POST',
+        url: '/whip/prod1/line1/testuser',
+        headers: { 'content-type': 'application/json' },
+        payload: JSON.stringify({ foo: 'bar' })
+      });
+
+      expect(deleteEndpointSpy).not.toHaveBeenCalled();
+      deleteEndpointSpy.mockRestore();
     });
 
     it('should return 415 for unsupported content type', async () => {
@@ -471,7 +518,8 @@ describe('apiWhip', () => {
       });
       const cookie = `auth_token=${server.jwt.sign({
         userId: 'participant-1',
-        username: 'p1'
+        username: 'p1',
+        tokenVersion: 0
       })}`;
 
       const response = await server.inject({
@@ -500,7 +548,8 @@ describe('apiWhip', () => {
       });
       const cookie = `auth_token=${server.jwt.sign({
         userId: 'producer-1',
-        username: 'prod1'
+        username: 'prod1',
+        tokenVersion: 0
       })}`;
 
       const response = await server.inject({
@@ -530,7 +579,8 @@ describe('apiWhip', () => {
       });
       const cookie = `auth_token=${server.jwt.sign({
         userId: 'producer-1',
-        username: 'prod1'
+        username: 'prod1',
+        tokenVersion: 0
       })}`;
 
       const response = await server.inject({

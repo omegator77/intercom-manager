@@ -557,6 +557,19 @@ export class DbManagerCouchDb implements DbManager {
     return this.getUserById(userId);
   }
 
+  async bumpTokenVersion(userId: string): Promise<void> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const existing = (await this.nanoDb.get(userId)) as unknown as User;
+    const updated = {
+      ...existing,
+      tokenVersion: (existing.tokenVersion ?? 0) + 1
+    };
+    await this.insertWithRetry(updated);
+  }
+
   async getUsersCount(): Promise<number> {
     await this.connect();
     if (!this.nanoDb) {

@@ -8,7 +8,21 @@ export async function getRequestUser(
   request: FastifyRequest
 ): Promise<User | undefined> {
   if (!request.user) return undefined;
-  return dbManager.getUserById(request.user.userId);
+  const user = await dbManager.getUserById(request.user.userId);
+  if (!user) return undefined;
+
+  // A token signed before the account's most recent logout is stale -
+  // logout bumps tokenVersion, so this makes every already-issued token
+  // stop passing any guard immediately rather than staying valid until its
+  // 7-day expiry. A token predating this check entirely (no tokenVersion
+  // claim) is treated as version 0, same as an account that has never
+  // logged out since, so this doesn't invalidate every existing session the
+  // moment it deploys - only from each account's next logout onward.
+  const currentTokenVersion = user.tokenVersion ?? 0;
+  const tokenVersion = request.user.tokenVersion ?? 0;
+  if (currentTokenVersion !== tokenVersion) return undefined;
+
+  return user;
 }
 
 /** Only the bootstrap admin account (and anyone later promoted) may create productions or manage roles across productions. */

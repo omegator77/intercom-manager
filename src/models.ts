@@ -425,7 +425,12 @@ export const User = Type.Object({
   // Only the bootstrap account is a super admin by default; every other
   // account's permissions are scoped per-production via ProductionMembership.
   isSuperAdmin: Type.Optional(Type.Boolean()),
-  createdAt: Type.String({ format: 'date-time' })
+  createdAt: Type.String({ format: 'date-time' }),
+  // Bumped on logout so previously issued JWTs (which carry the value from
+  // when they were signed) stop being accepted immediately rather than
+  // staying valid until their 7-day expiry. Absent/undefined is treated as
+  // 0 for accounts created before this field existed.
+  tokenVersion: Type.Optional(Type.Number())
 });
 export type User = Static<typeof User>;
 
@@ -502,7 +507,7 @@ export type InviteInfoResponse = Static<typeof InviteInfoResponse>;
 
 export const AcceptInviteRequest = Type.Object({
   username: Type.String(),
-  password: Type.String(),
+  password: Type.String({ minLength: 8, maxLength: 256 }),
   displayName: Type.String()
 });
 export type AcceptInviteRequest = Static<typeof AcceptInviteRequest>;

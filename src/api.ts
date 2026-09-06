@@ -1,5 +1,6 @@
 import fastifyCookie from '@fastify/cookie';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import fastifyJwt from '@fastify/jwt';
 import fastifyRateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
@@ -73,6 +74,15 @@ export default async (opts: ApiOptions) => {
   // register the cookie plugin
   api.register(fastifyCookie);
 
+  // register security headers (X-Frame-Options, X-Content-Type-Options,
+  // Referrer-Policy, etc). CSP is left off - this is a JSON/SDP API plus a
+  // Swagger UI at /api/docs, not a page-rendering server, and Swagger UI's
+  // inline scripts would need a bespoke policy to keep working under the
+  // default one.
+  api.register(helmet, {
+    contentSecurityPolicy: false
+  });
+
   // register the JWT plugin, used for the browser login cookie (auth_token).
   // WHIP/WHEP bearer-token auth is unrelated and untouched by this.
   api.register(fastifyJwt, {
@@ -82,7 +92,11 @@ export default async (opts: ApiOptions) => {
 
   // decorate every request with the logged in user, if any. Requests without
   // a valid cookie stay unauthenticated (request.user === null) so that
-  // guest/share-link joins keep working unchanged.
+  // guest/share-link joins keep working unchanged. This only checks the
+  // JWT's signature/expiry - tokenVersion (revoked-on-logout) is checked in
+  // getRequestUser (auth-guard.ts), the chokepoint every permission guard
+  // already calls through, rather than duplicating a DB lookup here for
+  // every request regardless of whether the route needs one.
   api.addHook('onRequest', async (request) => {
     try {
       await request.jwtVerify({ onlyCookie: true });
@@ -91,15 +105,16 @@ export default async (opts: ApiOptions) => {
     }
   });
 
-  // register the cors plugin, configure it for better security.
-  // credentials: true + origin: true (reflect the request origin) is required
-  // so the browser sends/receives the auth cookie cross-origin between the
-  // frontend and this API.
+  // register the cors plugin, restricted to the one configured frontend
+  // origin rather than reflecting any calling origin. credentials: true is
+  // needed so the browser sends/receives the auth cookie - reflecting an
+  // arbitrary origin alongside that would let any website that gets a
+  // logged-in user to visit it make authenticated requests here.
   api.register(cors, {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     exposedHeaders: ['Content-Type'],
-    origin: true,
+    origin: new URL(opts.publicHost).origin,
     credentials: true
   });
 
@@ -107,19 +122,23 @@ export default async (opts: ApiOptions) => {
     global: false // Only apply to specific routes
   });
 
-  // register the swagger plugins, it will automagically do magic
-  api.register(swagger, {
-    swagger: {
-      info: {
-        title: opts.title,
-        description: 'Intercom Manager API',
-        version: 'v1'
+  // register the swagger plugins, it will automagically do magic.
+  // Skipped in production - the full API surface (including auth routes)
+  // has no reason to be browsable by anyone who can reach the server.
+  if (process.env.NODE_ENV !== 'production') {
+    api.register(swagger, {
+      swagger: {
+        info: {
+          title: opts.title,
+          description: 'Intercom Manager API',
+          version: 'v1'
+        }
       }
-    }
-  });
-  api.register(swaggerUI, {
-    routePrefix: '/api/docs'
-  });
+    });
+    api.register(swaggerUI, {
+      routePrefix: '/api/docs'
+    });
+  }
 
   api.register(healthcheck, { title: opts.title });
   // register other API routes here

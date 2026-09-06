@@ -44,6 +44,7 @@ const mockDbManager = {
   getUserByUsername: jest.fn().mockResolvedValue(undefined),
   getUserById: jest.fn().mockResolvedValue(undefined),
   updateUserAlias: jest.fn(),
+  bumpTokenVersion: jest.fn().mockResolvedValue(undefined),
   getUsersCount: jest.fn().mockResolvedValue(0),
   createMembership: jest.fn(),
   getMembership: jest.fn().mockResolvedValue(undefined),
@@ -189,6 +190,79 @@ describe('auth api', () => {
       });
 
       expect(response.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    test('bumps tokenVersion for a logged-in user and clears the cookie', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(mockDbManager.bumpTokenVersion).toHaveBeenCalledWith('user-1');
+      expect(
+        response.cookies.some(
+          (c: any) => c.name === 'auth_token' && c.value === ''
+        )
+      ).toBe(true);
+    });
+
+    test('does nothing but clear the cookie when not logged in', async () => {
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout'
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(mockDbManager.bumpTokenVersion).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tokenVersion revocation', () => {
+    test('a token from before the last logout is rejected on a guarded route', async () => {
+      // Signed with the implicit tokenVersion 0 (cookieFor doesn't set one),
+      // but the account has since logged out elsewhere and is now on
+      // tokenVersion 1 - the stale token must not pass the guard.
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        tokenVersion: 1
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/invite',
+        headers: { cookie: cookieFor('user-1', 'alice') },
+        body: { productionId: 1, role: 'participant' }
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    test('a token matching the current tokenVersion still works', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        isSuperAdmin: true
+      });
+
+      const response = await server.inject({
+        method: 'POST',
+        url: '/api/v1/auth/invite',
+        headers: { cookie: cookieFor('user-1', 'alice') },
+        body: { productionId: 1, role: 'participant' }
+      });
+
+      expect(response.statusCode).not.toBe(401);
     });
   });
 
@@ -462,7 +536,7 @@ describe('auth api', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/auth/invite/used/accept',
-        body: { username: 'carol', password: 'pw', displayName: 'Carol' }
+        body: { username: 'carol', password: 'password123', displayName: 'Carol' }
       });
 
       expect(response.statusCode).toBe(410);
@@ -485,7 +559,7 @@ describe('auth api', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/auth/invite/abc123/accept',
-        body: { username: 'carol', password: 'pw', displayName: 'Carol' }
+        body: { username: 'carol', password: 'password123', displayName: 'Carol' }
       });
 
       expect(response.statusCode).toBe(400);
@@ -522,7 +596,7 @@ describe('auth api', () => {
       const response = await server.inject({
         method: 'POST',
         url: '/api/v1/auth/invite/abc123/accept',
-        body: { username: 'carol', password: 'pw', displayName: 'Carol' }
+        body: { username: 'carol', password: 'password123', displayName: 'Carol' }
       });
 
       expect(response.statusCode).toBe(200);
