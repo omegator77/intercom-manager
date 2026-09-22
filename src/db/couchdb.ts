@@ -582,6 +582,29 @@ export class DbManagerCouchDb implements DbManager {
     return response.rows.length;
   }
 
+  async getAllUsers(): Promise<User[]> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const response = await this.nanoDb.list({
+      startkey: 'user_',
+      endkey: 'user_￰',
+      include_docs: true
+    });
+    return response.rows.map((row) => row.doc as unknown as User);
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    await this.connect();
+    if (!this.nanoDb) {
+      throw new Error('Database not connected');
+    }
+    const doc = await this.nanoDb.get(userId);
+    const response = await this.nanoDb.destroy(doc._id, doc._rev);
+    return response.ok;
+  }
+
   async createMembership(
     membership: Omit<ProductionMembership, '_id'>
   ): Promise<ProductionMembership> {

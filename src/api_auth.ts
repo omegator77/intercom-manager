@@ -14,11 +14,17 @@ import {
   MembershipInfo,
   PublicUser,
   UpdateMeRequest,
-  UpdateMemberRoleRequest
+  UpdateMemberRoleRequest,
+  UserListInfo,
+  UserListResponse
 } from './models';
 import { DbManager } from './db/interface';
 import { hashPassword, verifyPassword } from './password';
-import { getRequestUser, requireProductionRole } from './auth-guard';
+import {
+  getRequestUser,
+  requireProductionRole,
+  requireSuperAdmin
+} from './auth-guard';
 import { Log } from './log';
 import './auth-types';
 
@@ -488,6 +494,84 @@ const apiAuth: FastifyPluginCallback<ApiAuthOptions> = (
 
       await dbManager.deleteMembership(userId, productionId);
       return reply.send('removed');
+    }
+  );
+
+  fastify.get<{
+    Reply: UserListResponse;
+  }>(
+    '/users',
+    {
+      preHandler: requireSuperAdmin(dbManager),
+      schema: {
+        description:
+          'List all user accounts and how many productions each belongs to. Super admin only.',
+        response: {
+          200: UserListResponse,
+          401: ErrorResponse,
+          403: ErrorResponse
+        }
+      }
+    },
+    async (_request, reply) => {
+      const allUsers = await dbManager.getAllUsers();
+
+      const users: UserListInfo[] = [];
+      for (const user of allUsers) {
+        // eslint-disable-next-line no-await-in-loop
+        const memberships = await dbManager.getMembershipsForUser(user._id);
+        users.push({
+          userId: user._id,
+          username: user.username,
+          displayName: user.displayName,
+          alias: user.alias,
+          isSuperAdmin: user.isSuperAdmin,
+          createdAt: user.createdAt,
+          membershipCount: memberships.length
+        });
+      }
+
+      return reply.send({ users });
+    }
+  );
+
+  fastify.delete<{
+    Params: { userId: string };
+    Reply: string | ErrorResponse;
+  }>(
+    '/users/:userId',
+    {
+      preHandler: requireSuperAdmin(dbManager),
+      schema: {
+        description:
+          'Permanently delete a user account. Refuses if the account still belongs to any production. Super admin only.',
+        response: {
+          200: Type.String(),
+          401: ErrorResponse,
+          403: ErrorResponse,
+          404: ErrorResponse,
+          409: ErrorResponse
+        }
+      }
+    },
+    async (request, reply) => {
+      const { userId } = request.params;
+
+      const user = await dbManager.getUserById(userId);
+      if (!user) {
+        return reply.code(404).send({ message: 'User not found' });
+      }
+
+      const memberships = await dbManager.getMembershipsForUser(userId);
+      if (memberships.length > 0) {
+        return reply.code(409).send({
+          message: `Cannot delete "${user.username}": still a member of ${memberships.length} production(s)`
+        });
+      }
+
+      await dbManager.deleteUser(userId);
+      Log().info(`Deleted orphaned user account "${user.username}"`);
+      return reply.send('deleted');
     }
   );
 

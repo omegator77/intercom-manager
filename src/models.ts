@@ -531,4 +531,20 @@ export const UpdateMemberRoleRequest = Type.Object({
 });
 export type UpdateMemberRoleRequest = Static<typeof UpdateMemberRoleRequest>;
 
+export const UserListInfo = Type.Object({
+  userId: Type.String(),
+  username: Type.String(),
+  displayName: Type.String(),
+  alias: Type.Optional(Type.String()),
+  isSuperAdmin: Type.Optional(Type.Boolean()),
+  createdAt: Type.String({ format: 'date-time' }),
+  membershipCount: Type.Number()
+});
+export type UserListInfo = Static<typeof UserListInfo>;
+
+export const UserListResponse = Type.Object({
+  users: Type.Array(UserListInfo)
+});
+export type UserListResponse = Static<typeof UserListResponse>;
+
 export const PatchIngestResponse = Type.Omit(Ingest, ['ipAddress']);

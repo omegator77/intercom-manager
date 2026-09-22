@@ -46,6 +46,8 @@ const mockDbManager = {
   updateUserAlias: jest.fn(),
   bumpTokenVersion: jest.fn().mockResolvedValue(undefined),
   getUsersCount: jest.fn().mockResolvedValue(0),
+  getAllUsers: jest.fn().mockResolvedValue([]),
+  deleteUser: jest.fn().mockResolvedValue(true),
   createMembership: jest.fn(),
   getMembership: jest.fn().mockResolvedValue(undefined),
   getMembershipsForUser: jest.fn().mockResolvedValue([]),
@@ -831,6 +833,182 @@ describe('auth api', () => {
       });
 
       expect(response.statusCode).toBe(404);
+    });
+  });
+
+  describe('GET /users', () => {
+    test('lists all users with their membership count, super admin only', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'admin-1',
+        username: 'root',
+        passwordHash: 'unused',
+        displayName: 'Root',
+        isSuperAdmin: true,
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+      mockDbManager.getAllUsers.mockResolvedValueOnce([
+        {
+          _id: 'user-1',
+          username: 'alice',
+          passwordHash: 'unused',
+          displayName: 'Alice',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        },
+        {
+          _id: 'user-2',
+          username: 'bob',
+          passwordHash: 'unused',
+          displayName: 'Bob',
+          createdAt: '2024-02-01T00:00:00.000Z'
+        }
+      ]);
+      mockDbManager.getMembershipsForUser
+        .mockResolvedValueOnce([
+          { _id: 'm1', userId: 'user-1', productionId: 1, role: 'admin' }
+        ])
+        .mockResolvedValueOnce([]);
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/users',
+        headers: { cookie: cookieFor('admin-1', 'root') }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({
+        users: [
+          expect.objectContaining({
+            userId: 'user-1',
+            username: 'alice',
+            membershipCount: 1
+          }),
+          expect.objectContaining({
+            userId: 'user-2',
+            username: 'bob',
+            membershipCount: 0
+          })
+        ]
+      });
+    });
+
+    test('rejects a non super admin', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const response = await server.inject({
+        method: 'GET',
+        url: '/api/v1/users',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+  });
+
+  describe('DELETE /users/:userId', () => {
+    test('deletes a user with no memberships', async () => {
+      mockDbManager.getUserById
+        .mockResolvedValueOnce({
+          _id: 'admin-1',
+          username: 'root',
+          passwordHash: 'unused',
+          displayName: 'Root',
+          isSuperAdmin: true,
+          createdAt: '2024-01-01T00:00:00.000Z'
+        })
+        .mockResolvedValueOnce({
+          _id: 'user-1',
+          username: 'alice',
+          passwordHash: 'unused',
+          displayName: 'Alice',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        });
+      mockDbManager.getMembershipsForUser.mockResolvedValueOnce([]);
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/users/user-1',
+        headers: { cookie: cookieFor('admin-1', 'root') }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockDbManager.deleteUser).toHaveBeenCalledWith('user-1');
+    });
+
+    test('refuses to delete a user that still has memberships', async () => {
+      mockDbManager.getUserById
+        .mockResolvedValueOnce({
+          _id: 'admin-1',
+          username: 'root',
+          passwordHash: 'unused',
+          displayName: 'Root',
+          isSuperAdmin: true,
+          createdAt: '2024-01-01T00:00:00.000Z'
+        })
+        .mockResolvedValueOnce({
+          _id: 'user-1',
+          username: 'alice',
+          passwordHash: 'unused',
+          displayName: 'Alice',
+          createdAt: '2024-01-01T00:00:00.000Z'
+        });
+      mockDbManager.getMembershipsForUser.mockResolvedValueOnce([
+        { _id: 'm1', userId: 'user-1', productionId: 1, role: 'participant' }
+      ]);
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/users/user-1',
+        headers: { cookie: cookieFor('admin-1', 'root') }
+      });
+
+      expect(response.statusCode).toBe(409);
+      expect(mockDbManager.deleteUser).not.toHaveBeenCalled();
+    });
+
+    test('returns 404 for an unknown user', async () => {
+      mockDbManager.getUserById
+        .mockResolvedValueOnce({
+          _id: 'admin-1',
+          username: 'root',
+          passwordHash: 'unused',
+          displayName: 'Root',
+          isSuperAdmin: true,
+          createdAt: '2024-01-01T00:00:00.000Z'
+        })
+        .mockResolvedValueOnce(undefined);
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/users/ghost',
+        headers: { cookie: cookieFor('admin-1', 'root') }
+      });
+
+      expect(response.statusCode).toBe(404);
+    });
+
+    test('rejects a non super admin', async () => {
+      mockDbManager.getUserById.mockResolvedValueOnce({
+        _id: 'user-1',
+        username: 'alice',
+        passwordHash: 'unused',
+        displayName: 'Alice',
+        createdAt: '2024-01-01T00:00:00.000Z'
+      });
+
+      const response = await server.inject({
+        method: 'DELETE',
+        url: '/api/v1/users/user-2',
+        headers: { cookie: cookieFor('user-1', 'alice') }
+      });
+
+      expect(response.statusCode).toBe(403);
+      expect(mockDbManager.deleteUser).not.toHaveBeenCalled();
     });
   });
 });

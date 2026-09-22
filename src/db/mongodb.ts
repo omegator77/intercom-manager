@@ -368,6 +368,19 @@ export class DbManagerMongoDb implements DbManager {
     return await db.collection('users').countDocuments();
   }
 
+  async getAllUsers(): Promise<User[]> {
+    const db = this.client.db();
+    return (await db.collection('users').find().toArray()) as any;
+  }
+
+  async deleteUser(userId: string): Promise<boolean> {
+    const db = this.client.db();
+    const result = await db
+      .collection('users')
+      .deleteOne({ _id: userId as any });
+    return result.deletedCount === 1;
+  }
+
   async createMembership(
     membership: Omit<ProductionMembership, '_id'>
   ): Promise<ProductionMembership> {

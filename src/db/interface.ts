@@ -47,6 +47,8 @@ export interface DbManager {
   ): Promise<User | undefined>;
   bumpTokenVersion(userId: string): Promise<void>;
   getUsersCount(): Promise<number>;
+  getAllUsers(): Promise<User[]>;
+  deleteUser(userId: string): Promise<boolean>;
 
   createMembership(
     membership: Omit<ProductionMembership, '_id'>
